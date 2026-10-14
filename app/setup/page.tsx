@@ -7,7 +7,7 @@ import artifacts from "@/lib/test-contract-artifacts.json";
 
 type SymbolName = "tCURR" | "uCURR";
 type EvmProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
   isMetaMask?: boolean;
   isPhantom?: boolean;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;

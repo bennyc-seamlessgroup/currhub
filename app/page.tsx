@@ -9,7 +9,7 @@ type Tab = "balance" | "swap" | "buy" | "airdrop";
 type Chain = "ethereum" | "solana";
 type Wallet = { address: string; balance: string; name: string };
 type EvmProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
   isMetaMask?: boolean;
@@ -48,6 +48,14 @@ function shortAddress(value: string) {
 }
 function displayAmount(value: number, digits = 5) {
   return value.toLocaleString("en-US", { maximumFractionDigits: digits });
+}
+function walletImportError(error: unknown): string {
+  if (error && typeof error === "object") {
+    const details = error as { code?: unknown; message?: unknown };
+    if (details.code === 4001) return "Token import was cancelled in your wallet.";
+    if (typeof details.message === "string" && details.message.trim()) return details.message;
+  }
+  return "Could not add token to wallet. Try importing its contract address in MetaMask.";
 }
 function BrandMark() {
   return <span className="brand-mark" aria-hidden="true">C</span>;
@@ -262,16 +270,16 @@ export default function Portal() {
     if (!selectedEvm || !tcurrBalance) return;
     try {
       await suggestTokenInWallet(selectedEvm.provider, tcurrBalance);
-      setNotice("Check your wallet to confirm the token import.");
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not add token to wallet."); }
+      setNotice("Token import accepted. Check your Sepolia token list in your wallet.");
+    } catch (error) { setNotice(walletImportError(error)); }
   }
 
   async function addUcurrToWallet() {
     if (!selectedEvm || !ucurrBalance) return;
     try {
       await suggestTokenInWallet(selectedEvm.provider, ucurrBalance, "uCURR");
-      setNotice("Check your wallet to confirm the token import.");
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not add token to wallet."); }
+      setNotice("Token import accepted. Check your Sepolia token list in your wallet.");
+    } catch (error) { setNotice(walletImportError(error)); }
   }
 
   function requestAction(action: "swap" | "buy" | "airdrop") {

@@ -15,7 +15,7 @@ const ERC20_READ_ABI = [
 export const SEPOLIA_ID = 11155111n;
 
 export type InjectedEthereum = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
 };
 
 export type TokenBalance = {
@@ -79,16 +79,16 @@ export async function suggestTokenInWallet(
   symbol: "tCURR" | "uCURR" = "tCURR",
 ): Promise<void> {
   await sepoliaProvider(injected);
-  await injected.request({
+  const accepted = await injected.request({
     method: "wallet_watchAsset",
-    params: [{
+    params: {
       type: "ERC20",
       options: {
         address: token.address,
-        chainId: Number(SEPOLIA_ID),
         symbol,
         decimals: token.decimals,
       },
-    }],
+    },
   });
+  if (accepted === false) throw new Error("Token import was declined in your wallet.");
 }
