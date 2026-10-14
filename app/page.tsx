@@ -5,6 +5,7 @@ import { brand } from "@/lib/brand";
 import { readTCurrBalance, readTokenBalance, readTokenOwner, suggestTokenInWallet, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
 import WalletPicker, { type WalletChoice } from "@/components/WalletPicker";
 import SwapPanel from "@/components/SwapPanel";
+import { clearWalletSession, readWalletSession, saveWalletSession } from "@/lib/wallet-session";
 
 type Tab = "balance" | "swap" | "buy" | "airdrop";
 type Chain = "ethereum" | "solana";
@@ -17,7 +18,7 @@ type EvmProvider = {
   isPhantom?: boolean;
 };
 type SolanaProvider = {
-  connect: () => Promise<{ publicKey: { toString: () => string } }>;
+  connect: (options?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: { toString: () => string } }>;
   publicKey?: { toString: () => string };
   isPhantom?: boolean;
 };
@@ -72,6 +73,7 @@ export default function Portal() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
+  const restoringRef = useRef(false);
   const [kycAction, setKycAction] = useState<"airdrop" | null>(null);
   const [tokenOwnerWallet, setTokenOwnerWallet] = useState("");
   const tcurrAddress = TCURR_SEPOLIA_ADDRESS;
@@ -109,7 +111,20 @@ export default function Portal() {
   useEffect(() => {
     const provider = selectedEvm?.provider;
     if (!provider?.on) return;
-    const onChange = () => {
+    const onChange = async () => {
+      const saved = readWalletSession();
+      if (saved?.chain === "ethereum") {
+        try {
+          const [accounts, chainId] = await Promise.all([
+            provider.request({ method: "eth_accounts" }) as Promise<string[]>,
+            provider.request({ method: "eth_chainId" }) as Promise<string>,
+          ]);
+          if (chainId.toLowerCase() === SEPOLIA_CHAIN_ID &&
+            accounts.some((account) => account.toLowerCase() === saved.address.toLowerCase())) return;
+        } catch { /* Treat an unreadable wallet as disconnected. */ }
+      }
+      if (readWalletSession()?.address !== saved?.address) return;
+      clearWalletSession();
       setWallets((current) => ({ ...current, ethereum: undefined }));
       setSelectedEvm(null);
       setTcurrBalance(null);
@@ -123,6 +138,53 @@ export default function Portal() {
       provider.removeListener?.("chainChanged", onChange);
     };
   }, [selectedEvm]);
+
+  useEffect(() => {
+    const saved = readWalletSession();
+    if (!saved || wallets.ethereum || wallets.solana || restoringRef.current) return;
+    if (saved.chain === "ethereum") {
+      const match = evmOptions.find((wallet) =>
+        wallet.id === saved.id || Boolean(saved.rdns && wallet.rdns === saved.rdns) ||
+        (wallet.name === saved.name && (!saved.id.startsWith("eip6963:") || wallet.id !== "legacy-ethereum")));
+      if (!match) return;
+      restoringRef.current = true;
+      (async () => {
+        const [accounts, chainId] = await Promise.all([
+          match.provider.request({ method: "eth_accounts" }) as Promise<string[]>,
+          match.provider.request({ method: "eth_chainId" }) as Promise<string>,
+        ]);
+        const address = accounts.find((account) => account.toLowerCase() === saved.address.toLowerCase());
+        if (!address || chainId.toLowerCase() !== SEPOLIA_CHAIN_ID ||
+          readWalletSession()?.address.toLowerCase() !== saved.address.toLowerCase()) return;
+        const raw = await match.provider.request({ method: "eth_getBalance", params: [address, "latest"] }) as string;
+        if (readWalletSession()?.address.toLowerCase() !== saved.address.toLowerCase()) return;
+        setSelectedEvm(match);
+        setWallets({ ethereum: { address, balance: `${displayAmount(Number(BigInt(raw)) / 1e18)} ETH`, name: match.name } });
+      })().catch(() => { /* A wallet can refuse silent access; the Connect button remains available. */ })
+        .finally(() => { restoringRef.current = false; });
+      return;
+    }
+    const match = solanaOptions.find((wallet) => wallet.id === saved.id || wallet.name === saved.name);
+    if (!match) return;
+    if (!match.provider.isPhantom) {
+      if (match.provider.publicKey?.toString() !== saved.address) return;
+      restoringRef.current = true;
+      readSolBalance(saved.address).then((balance) => {
+        if (readWalletSession()?.address === saved.address) setWallets({ solana: { address: saved.address, balance, name: match.name } });
+      }).finally(() => { restoringRef.current = false; });
+      return;
+    }
+    restoringRef.current = true;
+    (async () => {
+      const result = await match.provider.connect({ onlyIfTrusted: true });
+      const address = result.publicKey?.toString() || match.provider.publicKey?.toString();
+      if (!address || address !== saved.address || readWalletSession()?.address !== saved.address) return;
+      const balance = await readSolBalance(address);
+      if (readWalletSession()?.address !== saved.address) return;
+      setWallets({ solana: { address, balance, name: match.name } });
+    })().catch(() => { /* Phantom has not granted trusted access. */ })
+      .finally(() => { restoringRef.current = false; });
+  }, [evmOptions, solanaOptions, wallets.ethereum, wallets.solana]);
 
   useEffect(() => {
     if (!walletMenuOpen) return;
@@ -208,6 +270,15 @@ export default function Portal() {
     setSolanaOptions(found);
   }
 
+  async function readSolBalance(address: string) {
+    try {
+      const response = await fetch(SOLANA_RPC, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [address, { commitment: "confirmed" }] }) });
+      const payload = await response.json() as { result?: { value?: number } };
+      if (response.ok && typeof payload.result?.value === "number") return `${displayAmount(payload.result.value / 1e9)} SOL`;
+    } catch { /* The wallet remains connected if the public RPC is unavailable. */ }
+    return "Balance unavailable";
+  }
+
   async function connectEthereum(wallet: EvmWallet) {
     setPickerOpen(false);
     setBusy(true);
@@ -224,6 +295,7 @@ export default function Portal() {
       const raw = await wallet.provider.request({ method: "eth_getBalance", params: [accounts[0], "latest"] }) as string;
       setSelectedEvm(wallet);
       setWallets({ ethereum: { address: accounts[0], balance: `${displayAmount(Number(BigInt(raw)) / 1e18)} ETH`, name: wallet.name } });
+      saveWalletSession({ chain: "ethereum", address: accounts[0], id: wallet.id, name: wallet.name, rdns: wallet.rdns });
       setTab("balance");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not connect wallet."); }
     finally { setBusy(false); }
@@ -237,14 +309,10 @@ export default function Portal() {
       const result = await wallet.provider.connect();
       const address = result.publicKey?.toString() || wallet.provider.publicKey?.toString();
       if (!address) throw new Error("The wallet did not share an address.");
-      let balance = "Balance unavailable";
-      try {
-        const response = await fetch(SOLANA_RPC, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [address, { commitment: "confirmed" }] }) });
-        const payload = await response.json() as { result?: { value?: number } };
-        if (response.ok && typeof payload.result?.value === "number") balance = `${displayAmount(payload.result.value / 1e9)} SOL`;
-      } catch { /* Connected wallet remains visible if the public RPC is unavailable. */ }
+      const balance = await readSolBalance(address);
       setSelectedEvm(null);
       setWallets({ solana: { address, balance, name: wallet.name } });
+      saveWalletSession({ chain: "solana", address, id: wallet.id, name: wallet.name });
       setTab("balance");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not connect wallet."); }
     finally { setBusy(false); }
@@ -293,6 +361,7 @@ export default function Portal() {
   }
 
   function disconnectWallet() {
+    clearWalletSession();
     setWalletMenuOpen(false);
     setWallets({});
     setSelectedEvm(null);
@@ -328,7 +397,7 @@ export default function Portal() {
       </div>
     </div></header>
     <main className="main-container">
-      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? connected ? "Your tokenized shares and rewards" : "Connect your tokenized shares wallet" : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? wallets.solana ? "tCURR and uCURR are currently on Ethereum Sepolia. Switch to an Ethereum wallet to view them." : "View your tCURR and uCURR test token balances. Future uCURR rewards are not open yet." : tab === "swap" ? "Swap uCURR and test USDC on Sepolia when the pool is funded." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "Your tCURR balance is visible now. Airdrop claims will open after the rules are approved."}</p></div>{tab === "balance" && connected && <div className="page-top-actions">{wallets.ethereum && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</span><strong>{wallets.ethereum.balance}</strong></div>}{wallets.solana && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</span><strong>{wallets.solana.balance}</strong></div>}{wallets.ethereum && <button className="outline-button" onClick={refreshBalance} disabled={tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>}</div>
+      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? connected ? "Your tokenized shares and rewards" : "Connect your tokenized shares wallet" : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? wallets.solana ? "tCURR and uCURR are currently on Ethereum Sepolia. Switch to an Ethereum wallet to view them." : "View your tCURR and uCURR test token balances. Future uCURR rewards are not open yet." : tab === "swap" ? "Exchange uCURR and USDC directly from your wallet." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "Your tCURR balance is visible now. Airdrop claims will open after the rules are approved."}</p></div>{tab === "balance" && connected && <div className="page-top-actions">{wallets.ethereum && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</span><strong>{wallets.ethereum.balance}</strong></div>}{wallets.solana && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</span><strong>{wallets.solana.balance}</strong></div>}{wallets.ethereum && <button className="outline-button" onClick={refreshBalance} disabled={tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>}</div>
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss message">×</button></div>}
 
       {tab === "balance" && <>

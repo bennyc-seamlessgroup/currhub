@@ -1,4 +1,4 @@
-import { Contract, ZeroAddress, formatUnits, getAddress, parseUnits } from "ethers";
+import { Contract, ZeroAddress, formatUnits, getAddress, parseUnits, type Provider } from "ethers";
 import { sepoliaProvider, UCURR_SEPOLIA_ADDRESS, type InjectedEthereum } from "@/lib/tcurr";
 
 // The token and Uniswap v2 addresses are fixed to Ethereum Sepolia (chain 11155111).
@@ -68,6 +68,10 @@ export async function swapSigner(injected: InjectedEthereum, wallet: string) {
 
 export async function readPool(injected: InjectedEthereum): Promise<PoolState> {
   const provider = await sepoliaProvider(injected);
+  return readPoolFromProvider(provider);
+}
+
+export async function readPoolFromProvider(provider: Provider): Promise<PoolState> {
   const factory = new Contract(UNISWAP_V2_FACTORY, FACTORY_ABI, provider);
   const pair = getAddress(await factory.getPair(UCURR_SEPOLIA_ADDRESS, SEPOLIA_USDC_ADDRESS) as string);
   if (pair === ZeroAddress) return { pair: null, reserveUCurr: 0n, reserveUSDC: 0n };
@@ -106,8 +110,12 @@ export async function readLiquidityPosition(injected: InjectedEthereum, wallet: 
 }
 
 export async function quoteSwap(injected: InjectedEthereum, input: SwapToken, amountIn: bigint): Promise<bigint> {
-  if (amountIn <= 0n) throw new Error("Enter an amount greater than zero.");
   const provider = await sepoliaProvider(injected);
+  return quoteSwapFromProvider(provider, input, amountIn);
+}
+
+export async function quoteSwapFromProvider(provider: Provider, input: SwapToken, amountIn: bigint): Promise<bigint> {
+  if (amountIn <= 0n) throw new Error("Enter an amount greater than zero.");
   const router = new Contract(UNISWAP_V2_ROUTER, ROUTER_ABI, provider);
   const output: SwapToken = input === "uCURR" ? "USDC" : "uCURR";
   const amounts = await router.getAmountsOut(amountIn, [tokenAddress(input), tokenAddress(output)]) as bigint[];

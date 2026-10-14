@@ -6,6 +6,7 @@ import { readTokenBalance, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type To
 import PoolSetup from "@/components/PoolSetup";
 import SepoliaUSDCGuide from "@/components/SepoliaUSDCGuide";
 import SolanaSetup from "@/components/SolanaSetup";
+import { clearWalletSession, readWalletSession, saveWalletSession } from "@/lib/wallet-session";
 
 type SymbolName = "tCURR" | "uCURR";
 type EvmProvider = {
@@ -81,7 +82,20 @@ export default function TokenSetup() {
 
   useEffect(() => {
     if (!provider?.on) return;
-    const changed = () => {
+    const changed = async () => {
+      const saved = readWalletSession();
+      if (saved?.chain === "ethereum") {
+        try {
+          const [accounts, chainId] = await Promise.all([
+            provider.request({ method: "eth_accounts" }) as Promise<string[]>,
+            provider.request({ method: "eth_chainId" }) as Promise<string>,
+          ]);
+          if (chainId.toLowerCase() === SEPOLIA_CHAIN_ID &&
+            accounts.some((account) => account.toLowerCase() === saved.address.toLowerCase())) return;
+        } catch { /* Treat an unreadable wallet as disconnected. */ }
+      }
+      if (readWalletSession()?.address !== saved?.address) return;
+      clearWalletSession();
       setWallet(""); setEth(""); setBalances({}); setOwned({}); setRecipientAllowed(null); setSmartAccount(false);
       setMessage("Wallet changed. Connect again before continuing.");
     };
@@ -89,6 +103,28 @@ export default function TokenSetup() {
     provider.on("chainChanged", changed);
     return () => { provider.removeListener?.("accountsChanged", changed); provider.removeListener?.("chainChanged", changed); };
   }, [provider]);
+
+  useEffect(() => {
+    if (!provider || wallet) return;
+    const saved = readWalletSession();
+    if (saved?.chain !== "ethereum" || !/metamask/i.test(saved.name)) return;
+    let active = true;
+    Promise.all([
+      provider.request({ method: "eth_accounts" }) as Promise<string[]>,
+      provider.request({ method: "eth_chainId" }) as Promise<string>,
+    ]).then(async ([accounts, chainId]) => {
+      const address = accounts.find((account) => account.toLowerCase() === saved.address.toLowerCase());
+      if (!address || chainId.toLowerCase() !== SEPOLIA_CHAIN_ID || !active ||
+        readWalletSession()?.address.toLowerCase() !== saved.address.toLowerCase()) return;
+      const checked = getAddress(address);
+      const smart = await usesMetaMaskSmartAccount(provider, checked);
+      if (!active || readWalletSession()?.address.toLowerCase() !== saved.address.toLowerCase()) return;
+      setSmartAccount(smart);
+      setWallet(checked);
+      await refreshEth(checked, provider);
+    }).catch(() => { /* A manual connection remains available. */ });
+    return () => { active = false; };
+  }, [provider, wallet]);
 
   useEffect(() => {
     if (!wallet || !provider) return;
@@ -138,6 +174,7 @@ export default function TokenSetup() {
       const address = getAddress(accounts[0]);
       setSmartAccount(await usesMetaMaskSmartAccount(provider, address));
       setWallet(address);
+      saveWalletSession({ chain: "ethereum", address, id: "metamask", name: "MetaMask", rdns: "io.metamask" });
       await refreshEth(address, provider);
     } catch (error) { setMessage(errorText(error)); }
     finally { setBusy(""); }

@@ -5,7 +5,7 @@ import { formatUnits } from "ethers";
 import type { InjectedEthereum } from "@/lib/tcurr";
 import {
   approveForSwap, displayTokenAmount, executeSwap, minimumAfterSlippage,
-  parseTokenAmount, quoteSwap, readPool, readSwapAllowance, readSwapBalance,
+  parseTokenAmount, quoteSwap, readSwapAllowance, readSwapBalance,
   swapError, tokenDecimals, type PoolState, type SwapToken,
 } from "@/lib/sepolia-swap";
 
@@ -32,47 +32,57 @@ export default function SwapPanel({ provider, wallet, connectedToSolana, onConne
   const [txHash, setTxHash] = useState("");
   const outputToken: SwapToken = inputToken === "uCURR" ? "USDC" : "uCURR";
   const poolLive = Boolean(pool && pool.reserveUCurr > 0n && pool.reserveUSDC > 0n);
+  const rate = poolLive && pool ? Number(formatUnits(inputToken === "uCURR" ? pool.reserveUSDC : pool.reserveUCurr, tokenDecimals(outputToken))) /
+    Number(formatUnits(inputToken === "uCURR" ? pool.reserveUCurr : pool.reserveUSDC, tokenDecimals(inputToken))) : null;
 
   useEffect(() => {
-    if (!provider || !wallet) { setPool(null); setBalances(null); return; }
+    if (!provider || !wallet) { setBalances(null); return; }
     let active = true;
-    setPool(null);
     setBalances(null);
     Promise.all([
-      readPool(provider),
       readSwapBalance(provider, wallet, "uCURR"),
       readSwapBalance(provider, wallet, "USDC"),
-    ]).then(([nextPool, uCURR, USDC]) => {
-      if (active) { setPool(nextPool); setBalances({ uCURR, USDC }); }
+    ]).then(([uCURR, USDC]) => {
+      if (active) setBalances({ uCURR, USDC });
     }).catch((error) => { if (active) setMessage(swapError(error)); });
     return () => { active = false; };
   }, [provider, wallet]);
 
   useEffect(() => {
     setQuote(null);
-    setAllowance(null);
     setQuoteError("");
-    if (!provider || !wallet || !poolLive) { setQuoteLoading(false); return; }
-    let amount: bigint;
-    try { amount = parseTokenAmount(amountInput, inputToken); }
+    try { parseTokenAmount(amountInput, inputToken); }
     catch (error) { setQuoteError(swapError(error)); setQuoteLoading(false); return; }
     let active = true;
     setQuoteLoading(true);
     const timer = window.setTimeout(() => {
-      Promise.all([
-        quoteSwap(provider, inputToken, amount),
-        readSwapAllowance(provider, wallet, inputToken),
-      ]).then(([nextQuote, nextAllowance]) => {
+      fetch(`/api/swap-quote?input=${inputToken}&amount=${encodeURIComponent(amountInput)}`, { cache: "no-store" })
+        .then(async (response) => {
+          const result = await response.json() as { error?: string; pair?: string | null; reserveUCurr?: string; reserveUSDC?: string; amountOut?: string };
+          if (!response.ok) throw new Error(result.error || "Quote is temporarily unavailable.");
+          return result;
+        }).then((result) => {
         if (active) {
+          setPool({ pair: result.pair || null, reserveUCurr: BigInt(result.reserveUCurr || "0"), reserveUSDC: BigInt(result.reserveUSDC || "0") });
+          const nextQuote = BigInt(result.amountOut || "0");
           setQuote(nextQuote);
-          setAllowance(nextAllowance);
-          if (nextQuote === 0n) setQuoteError("This amount is too small for the pool. Enter a larger amount.");
+          if (nextQuote === 0n) setQuoteError("No quote is available for this amount.");
         }
-      }).catch(() => { if (active) setQuoteError("Could not get a live quote. Try a smaller amount."); })
+      }).catch((error) => { if (active) { setPool(null); setQuoteError(error instanceof Error ? error.message : "Quote is temporarily unavailable."); } })
         .finally(() => { if (active) setQuoteLoading(false); });
-    }, 250);
+    }, 300);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [provider, wallet, poolLive, inputToken, amountInput, quoteVersion]);
+  }, [inputToken, amountInput, quoteVersion]);
+
+  useEffect(() => {
+    setAllowance(null);
+    if (!provider || !wallet) return;
+    let active = true;
+    readSwapAllowance(provider, wallet, inputToken)
+      .then((value) => { if (active) setAllowance(value); })
+      .catch(() => { if (active) setAllowance(null); });
+    return () => { active = false; };
+  }, [provider, wallet, inputToken]);
 
   let amount = 0n;
   try { amount = parseTokenAmount(amountInput, inputToken); } catch { /* Error shown with the quote. */ }
@@ -88,16 +98,14 @@ export default function SwapPanel({ provider, wallet, connectedToSolana, onConne
   }
 
   async function refresh() {
+    setQuoteVersion((current) => current + 1);
     if (!provider || !wallet) return;
     try {
-      const [nextPool, uCURR, USDC] = await Promise.all([
-        readPool(provider),
+      const [uCURR, USDC] = await Promise.all([
         readSwapBalance(provider, wallet, "uCURR"),
         readSwapBalance(provider, wallet, "USDC"),
       ]);
-      setPool(nextPool);
       setBalances({ uCURR, USDC });
-      setQuoteVersion((current) => current + 1);
     } catch (error) { setMessage(swapError(error)); }
   }
 
@@ -113,7 +121,7 @@ export default function SwapPanel({ provider, wallet, connectedToSolana, onConne
       if (latestAllowance < amount) {
         const transaction = await approveForSwap(provider, wallet, inputToken, amount);
         setTxHash(transaction.hash);
-        setMessage("Waiting for token spending approval on Sepolia…");
+        setMessage("Waiting for token spending approval…");
         await transaction.wait();
         setAllowance(await readSwapAllowance(provider, wallet, inputToken));
         setMessage(`${inputToken} spending approved. Review the live quote, then swap.`);
@@ -125,7 +133,7 @@ export default function SwapPanel({ provider, wallet, connectedToSolana, onConne
         }
         const transaction = await executeSwap(provider, wallet, inputToken, amount, minimumAfterSlippage(freshQuote));
         setTxHash(transaction.hash);
-        setMessage("Waiting for your Sepolia swap to confirm…");
+        setMessage("Waiting for your swap to confirm…");
         await transaction.wait();
         await refresh();
         onSuccess();
@@ -136,19 +144,20 @@ export default function SwapPanel({ provider, wallet, connectedToSolana, onConne
   }
 
   return <div className="feature-layout"><section className="feature-card">
-    <div className="feature-card-title"><h2>Swap tokens</h2><span className="preview-pill">SEPOLIA</span></div>
+    <div className="feature-card-title"><h2>Swap tokens</h2></div>
     <label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="any" value={amountInput} onChange={(event) => { setAmountInput(event.target.value); setMessage(""); }} aria-label={`Amount of ${inputToken} to swap`} disabled={busy} /><strong>{inputToken}</strong></div></label>
     <button className="swap-arrow" type="button" onClick={reverse} aria-label="Reverse swap direction" title="Reverse swap direction" disabled={busy}>⇅</button>
-    <div className="amount-box result-box"><span>You receive (live quote)</span><div><b>{quoteLoading ? "Reading…" : quote && quote > 0n ? displayTokenAmount(quote, outputToken) : "—"}</b><strong>{outputToken}</strong></div></div>
+    <div className="amount-box result-box"><span>Estimated receive</span><div><b>{quoteLoading ? "Getting price…" : quote && quote > 0n ? displayTokenAmount(quote, outputToken) : "—"}</b><strong>{outputToken}</strong></div></div>
+    {rate !== null && Number.isFinite(rate) && <div className="swap-details"><span>Current rate</span><strong>1 {inputToken} ≈ {rate.toLocaleString("en-US", { maximumSignificantDigits: 6 })} {outputToken}</strong></div>}
     {wallet && balances && <div className="swap-details"><span>Your {inputToken} balance</span><strong>{displayTokenAmount(balances[inputToken], inputToken)}</strong></div>}
     {quote && quote > 0n && <div className="swap-details"><span>Minimum received (1% tolerance)</span><strong>{displayTokenAmount(minimumAfterSlippage(quote), outputToken)} {outputToken}</strong></div>}
     {quoteError && <p className="setup-error" role="status">{quoteError}</p>}
     {insufficientBalance && <p className="setup-error">Your wallet does not have enough {inputToken} for this swap.</p>}
     {!wallet ? <button className="primary-button full-button" onClick={onConnect}>{connectedToSolana ? "Switch to an Ethereum wallet" : "Connect wallet"}</button>
-      : !poolLive ? <button className="primary-button full-button" disabled>Swap pool is not live yet</button>
-        : <button className="primary-button full-button" onClick={proceed} disabled={!canTrade || busy || quoteLoading}>{busy ? "Waiting for MetaMask…" : approved ? `Swap ${inputToken} for ${outputToken}` : `Authorize ${inputToken} spending`}</button>}
+      : !poolLive ? <button className="primary-button full-button" disabled>Trading is temporarily unavailable</button>
+        : <button className="primary-button full-button" onClick={proceed} disabled={!canTrade || busy || quoteLoading}>{busy ? "Waiting for wallet…" : approved ? `Swap ${inputToken} for ${outputToken}` : `Approve ${inputToken} to swap`}</button>}
     {message && <p className="swap-message" role="status">{message}</p>}
     {txHash && <p className="setup-tx">Transaction: <a href={`https://sepolia.etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></p>}
-    <p className="transaction-note">Real Sepolia test tokens only. MetaMask confirms token approval and the swap; each uses test ETH for network fees.</p>
-  </section><aside className="feature-aside"><div className="aside-icon">⇄</div><h3>Live uCURR ↔ USDC</h3><p>Quotes come from the Uniswap pool and change with trades. Test USDC has no cash value.</p>{pool?.pair && <a className="text-button" href={`https://sepolia.etherscan.io/address/${pool.pair}`} target="_blank" rel="noopener noreferrer">View pool on Etherscan ↗</a>}{wallet && <button className="text-button swap-refresh" onClick={refresh} disabled={busy}>Refresh balances</button>}</aside></div>;
+    <p className="transaction-note">Review the final amount and network fee in your wallet before confirming.</p>
+  </section><aside className="feature-aside"><div className="aside-icon">⇄</div><h3>Exchange at a glance</h3><p>Your quote updates as you change the amount. Prices can move before you confirm.</p><a className="text-button" href="https://docs.uniswap.org/contracts/v2/overview" target="_blank" rel="noopener noreferrer">Swaps use the Uniswap v2 protocol ↗</a>{wallet && <button className="text-button swap-refresh" onClick={refresh} disabled={busy}>Refresh balances</button>}</aside></div>;
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatUnits } from "ethers";
+import { readWalletSession, saveWalletSession } from "@/lib/wallet-session";
 
 const SOLANA_DEVNET_RPC = process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC || "https://api.devnet.solana.com";
 const SOLANA_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
@@ -37,6 +38,22 @@ export default function SolanaSetup() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  useEffect(() => {
+    const saved = readWalletSession();
+    if (saved?.chain !== "solana") return;
+    const phantom = window.phantom?.solana || (window.solana?.isPhantom ? window.solana : undefined);
+    if (!phantom) return;
+    let active = true;
+    phantom.connect({ onlyIfTrusted: true }).then(async (result) => {
+      const address = result.publicKey?.toString();
+      if (!active || address !== saved.address || readWalletSession()?.address !== saved.address) return;
+      setWallet(address);
+      const balances = await readBalances(address);
+      if (active && readWalletSession()?.address === saved.address) { setSol(balances.sol); setUsdc(balances.usdc); }
+    }).catch(() => { /* A manual connection remains available. */ });
+    return () => { active = false; };
+  }, []);
+
   async function refresh(address: string) {
     const balances = await readBalances(address);
     setSol(balances.sol);
@@ -52,6 +69,7 @@ export default function SolanaSetup() {
       const result = await phantom.connect();
       const address = result.publicKey.toString();
       setWallet(address);
+      saveWalletSession({ chain: "solana", address, id: "phantom-solana", name: "Phantom" });
       setSol(null);
       setUsdc(null);
       await refresh(address);
@@ -96,8 +114,8 @@ export default function SolanaSetup() {
     </div></section>
     <section className="setup-intro"><span className="setup-step">4</span><div>
       <h2>Start Solana swaps</h2>
-      <p>After the Solana uCURR mint exists, a separate Devnet uCURR/USDC liquidity pool and wallet swap flow must be set up. The current live swap uses Ethereum Sepolia only.</p>
-      <p className="setup-pending">Solana pool creation and swaps are not available on CURR Hub yet. No Solana token or pool deployment is being claimed here.</p>
+      <p>Once Solana uCURR is available, a Devnet uCURR/USDC pool can support swaps confirmed in Phantom. Raydium has a Devnet pool integration path; Jupiter&apos;s published Swap API is intended for its main Solana market.</p>
+      <p className="setup-pending">Solana swaps are not available in CURR Hub yet. The Solana tokens and pool still need to be created.</p>
     </div></section>
     <p className="setup-disclaimer">Solana Devnet SOL and test USDC have no cash value. Never enter a recovery phrase or private key in this site.</p>
   </div>;
