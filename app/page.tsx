@@ -5,6 +5,7 @@ import { brand } from "@/lib/brand";
 import { addressKey, calculateAirdrop, claimAllocation } from "@/lib/airdrop.mjs";
 import { readTCurrBalance, suggestTokenInWallet, validEthereumAddress, type TCurrBalance } from "@/lib/tcurr";
 import TCurrHoldingCard from "@/components/TCurrHoldingCard";
+import WalletPicker from "@/components/WalletPicker";
 
 type Chain = "ethereum" | "solana";
 type Tab = "overview" | "wallets" | "airdrop" | "swap" | "buy" | "account" | "admin";
@@ -23,7 +24,18 @@ type DemoState = {
   profile: Profile | null;
   activity: Activity[];
 };
-type Wallet = { address: string; balance: string };
+type Wallet = { address: string; balance: string; name: string };
+type EvmProvider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+};
+type SolanaProvider = {
+  connect: () => Promise<{ publicKey: { toString: () => string } }>;
+  publicKey?: { toString: () => string };
+};
+type EvmWalletOption = { id: string; name: string; provider: EvmProvider };
+type SolanaWalletOption = { id: string; name: string; provider: SolanaProvider };
 
 const STORAGE_KEY = "currhub-mvp-v1";
 const TOKEN_ADDRESS_KEY = "currhub-tcurr-sepolia-contract";
@@ -74,12 +86,9 @@ function log(state: DemoState, title: string, detail: string): DemoState {
 
 declare global {
   interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-      on?: (event: string, listener: (...args: unknown[]) => void) => void;
-      removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
-    };
-    solana?: { connect: () => Promise<{ publicKey: { toString: () => string } }>; publicKey?: { toString: () => string } };
+    ethereum?: EvmProvider;
+    solana?: SolanaProvider;
+    solflare?: SolanaProvider;
     phantom?: { solana?: Window["solana"] };
   }
 }
@@ -102,6 +111,10 @@ export default function Portal() {
   const [state, setState] = useState<DemoState>(initialState);
   const [ready, setReady] = useState(false);
   const [wallets, setWallets] = useState<Partial<Record<Chain, Wallet>>>({});
+  const [evmOptions, setEvmOptions] = useState<EvmWalletOption[]>([]);
+  const [solanaOptions, setSolanaOptions] = useState<SolanaWalletOption[]>([]);
+  const [selectedEvm, setSelectedEvm] = useState<EvmWalletOption | null>(null);
+  const [walletPickerChain, setWalletPickerChain] = useState<Chain | "all" | null>(null);
   const [tcurrAddress, setTCurrAddress] = useState(process.env.NEXT_PUBLIC_TCURR_SEPOLIA_ADDRESS || "");
   const [tcurrDraft, setTCurrDraft] = useState(process.env.NEXT_PUBLIC_TCURR_SEPOLIA_ADDRESS || "");
   const [tcurrBalance, setTCurrBalance] = useState<TCurrBalance | null>(null);
@@ -139,8 +152,26 @@ export default function Portal() {
     if (state.profile) setProfileForm({ name: state.profile.name, email: state.profile.email, country: state.profile.country });
   }, [state.profile?.name, state.profile?.email, state.profile?.country]);
   useEffect(() => {
+    const onAnnounce = (event: Event) => {
+      const detail = (event as CustomEvent<{ info?: { uuid?: string; name?: string }; provider?: EvmProvider }>).detail;
+      if (!detail || typeof detail.info?.uuid !== "string" || typeof detail.info.name !== "string" || typeof detail.provider?.request !== "function") return;
+      const id = `eip6963:${detail.info.uuid.slice(0, 100)}`;
+      const name = detail.info.name.trim().slice(0, 50) || "Ethereum wallet";
+      const provider = detail.provider;
+      setEvmOptions((current) => {
+        const withoutDuplicateFallback = current.filter((wallet) => wallet.provider !== provider || wallet.id !== "legacy-ethereum");
+        if (withoutDuplicateFallback.some((wallet) => wallet.id === id || wallet.provider === provider)) return withoutDuplicateFallback;
+        return [...withoutDuplicateFallback, { id, name, provider }];
+      });
+    };
+    window.addEventListener("eip6963:announceProvider", onAnnounce);
+    refreshWalletOptions();
+    return () => window.removeEventListener("eip6963:announceProvider", onAnnounce);
+  }, []);
+  useEffect(() => {
     const address = wallets.ethereum?.address;
-    if (!address || !tcurrAddress || !window.ethereum) {
+    const provider = selectedEvm?.provider;
+    if (!address || !tcurrAddress || !provider) {
       setTCurrBalance(null);
       setTCurrError("");
       setTCurrLoading(false);
@@ -150,17 +181,18 @@ export default function Portal() {
     setTCurrLoading(true);
     setTCurrBalance(null);
     setTCurrError("");
-    readTCurrBalance(window.ethereum, tcurrAddress, address)
+    readTCurrBalance(provider, tcurrAddress, address)
       .then((result) => { if (active) setTCurrBalance(result); })
       .catch((error) => { if (active) setTCurrError(error instanceof Error ? error.message : "Could not read tCURR balance."); })
       .finally(() => { if (active) setTCurrLoading(false); });
     return () => { active = false; };
-  }, [wallets.ethereum?.address, tcurrAddress]);
+  }, [wallets.ethereum?.address, tcurrAddress, selectedEvm]);
   useEffect(() => {
-    const ethereum = window.ethereum;
+    const ethereum = selectedEvm?.provider;
     if (!ethereum?.on) return;
     const clearConnectedWallet = () => {
       setWallets((current) => ({ ...current, ethereum: undefined }));
+      setSelectedEvm(null);
       setTCurrBalance(null);
       setTCurrError("");
       setNotice("Wallet account or network changed. Reconnect to read the correct balance.");
@@ -171,7 +203,7 @@ export default function Portal() {
       ethereum.removeListener?.("accountsChanged", clearConnectedWallet);
       ethereum.removeListener?.("chainChanged", clearConnectedWallet);
     };
-  }, []);
+  }, [selectedEvm]);
 
   const allocations = useMemo(() => {
     try { return calculateAirdrop(state.holdings, state.pool) as Allocation[]; }
@@ -182,6 +214,28 @@ export default function Portal() {
   const ownClaim = connectedAddresses.map((address) => claimAllocation(state.snapshot, address) as Allocation | null).find(Boolean);
   const hasClaimed = Boolean(ownClaim && state.snapshot?.claims.includes(addressKey(ownClaim.address)));
 
+  function refreshWalletOptions() {
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+    const fallback = window.ethereum;
+    if (fallback?.request) {
+      setEvmOptions((current) => current.some((wallet) => wallet.provider === fallback) ? current : [...current, { id: "legacy-ethereum", name: "Browser Ethereum wallet", provider: fallback }]);
+    }
+    const candidates: [string, string, SolanaProvider | undefined][] = [
+      ["phantom-solana", "Phantom", window.phantom?.solana],
+      ["solflare", "Solflare", window.solflare],
+      ["browser-solana", "Browser Solana wallet", window.solana],
+    ];
+    const found: SolanaWalletOption[] = [];
+    for (const [id, name, provider] of candidates) {
+      if (provider?.connect && !found.some((wallet) => wallet.provider === provider)) found.push({ id, name, provider });
+    }
+    setSolanaOptions(found);
+  }
+  function openWalletPicker(chain: Chain | "all") {
+    refreshWalletOptions();
+    setWalletPickerChain(chain);
+  }
+
   function saveTCurrAddress() {
     const address = tcurrDraft.trim();
     if (!validEthereumAddress(address)) return setNotice("Enter a valid Ethereum tCURR contract address.");
@@ -190,16 +244,16 @@ export default function Portal() {
     setNotice(wallets.ethereum ? "tCURR contract selected. Reading your Sepolia wallet balance." : "tCURR contract selected. Connect your Ethereum wallet to read its Sepolia balance.");
   }
   async function refreshTCurr() {
-    if (!window.ethereum || !wallets.ethereum?.address || !tcurrAddress) return;
+    if (!selectedEvm || !wallets.ethereum?.address || !tcurrAddress) return;
     setTCurrLoading(true); setTCurrError("");
-    try { setTCurrBalance(await readTCurrBalance(window.ethereum, tcurrAddress, wallets.ethereum.address)); }
+    try { setTCurrBalance(await readTCurrBalance(selectedEvm.provider, tcurrAddress, wallets.ethereum.address)); }
     catch (error) { setTCurrBalance(null); setTCurrError(error instanceof Error ? error.message : "Could not read tCURR balance."); }
     finally { setTCurrLoading(false); }
   }
   async function addTCurrToWallet() {
-    if (!window.ethereum || !tcurrBalance) return;
+    if (!selectedEvm || !tcurrBalance) return;
     try {
-      await suggestTokenInWallet(window.ethereum, tcurrBalance);
+      await suggestTokenInWallet(selectedEvm.provider, tcurrBalance);
       setNotice("Token import was suggested to your wallet. Check the wallet to confirm it appears.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Wallet did not accept the token import request."); }
   }
@@ -218,38 +272,38 @@ export default function Portal() {
     setState((previous) => log({ ...previous, profile: { ...previous.profile!, country: profileForm.country.trim(), kyc: "approved_demo" } }, "Demo KYC approved", "Self-attested simulator; no identity verification occurred."));
     setNotice("Demo KYC marked approved. No identity verification occurred.");
   }
-  async function connectEthereum() {
-    if (!window.ethereum) return setNotice("No EVM wallet detected. Install a browser wallet that supports Sepolia.");
+  async function connectEthereum(wallet: EvmWalletOption) {
+    setWalletPickerChain(null);
     setBusy("ethereum"); setNotice("");
     try {
-      const accounts = await window.ethereum.request({ method: "eth_requestAccounts" }) as string[];
+      const accounts = await wallet.provider.request({ method: "eth_requestAccounts" }) as string[];
       if (!accounts?.[0]) throw new Error("Wallet did not return an address.");
-      let chainId = await window.ethereum.request({ method: "eth_chainId" }) as string;
+      let chainId = await wallet.provider.request({ method: "eth_chainId" }) as string;
       if (chainId.toLowerCase() !== SEPOLIA_CHAIN_ID) {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: SEPOLIA_CHAIN_ID }] });
-        chainId = await window.ethereum.request({ method: "eth_chainId" }) as string;
+        await wallet.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: SEPOLIA_CHAIN_ID }] });
+        chainId = await wallet.provider.request({ method: "eth_chainId" }) as string;
       }
       if (chainId.toLowerCase() !== SEPOLIA_CHAIN_ID) throw new Error("Select Ethereum Sepolia in your wallet.");
-      const raw = await window.ethereum.request({ method: "eth_getBalance", params: [accounts[0], "latest"] }) as string;
+      const raw = await wallet.provider.request({ method: "eth_getBalance", params: [accounts[0], "latest"] }) as string;
       const eth = Number(BigInt(raw)) / 1e18;
-      setWallets((current) => ({ ...current, ethereum: { address: accounts[0], balance: `${format(eth, 5)} Sepolia ETH` } }));
-      setNotice("Ethereum wallet connected on Sepolia.");
+      setSelectedEvm(wallet);
+      setWallets((current) => ({ ...current, ethereum: { address: accounts[0], balance: `${format(eth, 5)} Sepolia ETH`, name: wallet.name } }));
+      setNotice(`${wallet.name} connected on Ethereum Sepolia.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not connect Ethereum wallet."); }
     finally { setBusy(null); }
   }
-  async function connectSolana() {
-    const provider = window.phantom?.solana || window.solana;
-    if (!provider) return setNotice("No Solana wallet detected. Install Phantom or another injected Solana wallet.");
+  async function connectSolana(wallet: SolanaWalletOption) {
+    setWalletPickerChain(null);
     setBusy("solana"); setNotice("");
     try {
-      const result = await provider.connect();
-      const address = result.publicKey?.toString() || provider.publicKey?.toString();
+      const result = await wallet.provider.connect();
+      const address = result.publicKey?.toString() || wallet.provider.publicKey?.toString();
       if (!address) throw new Error("Wallet did not return an address.");
       const response = await fetch(SOLANA_RPC, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [address, { commitment: "confirmed" }] }) });
       const payload = await response.json() as { result?: { value?: number }; error?: { message?: string } };
       if (!response.ok || payload.error || typeof payload.result?.value !== "number") throw new Error(payload.error?.message || "Devnet RPC balance check failed.");
-      setWallets((current) => ({ ...current, solana: { address, balance: `${format(payload.result!.value! / 1e9, 5)} Devnet SOL` } }));
-      setNotice("Solana address connected and checked against Devnet RPC. This does not change the wallet's own network setting.");
+      setWallets((current) => ({ ...current, solana: { address, balance: `${format(payload.result!.value! / 1e9, 5)} Devnet SOL`, name: wallet.name } }));
+      setNotice(`${wallet.name} connected. Solana address checked against Devnet RPC; the wallet's own network setting did not change.`);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not connect Solana wallet."); }
     finally { setBusy(null); }
   }
@@ -299,7 +353,7 @@ export default function Portal() {
   }
   function resetDemo() {
     if (!window.confirm("Reset all local demo accounts, holdings, snapshots, claims and balances in this browser?")) return;
-    setState(initialState()); setWallets({}); setNotice("Local demo data reset.");
+    setState(initialState()); setWallets({}); setSelectedEvm(null); setNotice("Local demo data reset.");
   }
 
   const currentTitle = nav.find((item) => item.id === tab)?.label ?? "Overview";
@@ -320,7 +374,7 @@ export default function Portal() {
           <div className="two-column"><section className="panel"><div className="panel-heading"><div><div className="eyebrow">GET STARTED</div><h3>Quick actions</h3></div><span className="heading-mark">↗</span></div><div className="quick-grid"><button onClick={() => setTab("wallets")}><span className="quick-icon blue">◇</span><strong>Connect wallet</strong><small>Sepolia or Devnet</small><span className="quick-arrow">↗</span></button><button onClick={() => setTab("airdrop")}><span className="quick-icon purple">✳</span><strong>View airdrop</strong><small>Preview allocations</small><span className="quick-arrow">↗</span></button><button onClick={() => setTab("swap")}><span className="quick-icon peach">⇄</span><strong>Try swap</strong><small>Demo balances only</small><span className="quick-arrow">↗</span></button></div></section><section className="panel"><div className="panel-heading"><div><div className="eyebrow">ACTIVITY</div><h3>Recent events</h3></div><span className="heading-mark">◷</span></div>{state.activity.length ? <div className="activity-list">{state.activity.slice(0, 3).map((item) => <div className="activity-row" key={item.id}><span className="activity-icon">↗</span><div><strong>{item.title}</strong><small>{item.detail}</small></div><time>{new Date(item.at).toLocaleDateString()}</time></div>)}</div> : <EmptyState title="No activity yet" body="Your demo activity will appear here as you explore." />}</section></div>
           <div className="info-strip"><span>ⓘ</span><div><strong>Built for exploration</strong><p>Wallet connections read testnet balances, including tCURR on Sepolia when its contract is set. Airdrop, swap, and purchase actions remain browser-local simulations.</p></div></div>
         </>}
-        {tab === "wallets" && <><SectionHead eyebrow="NETWORK ACCESS" title="Connect your wallets" body="Read balances from Ethereum Sepolia and Solana Devnet. No transaction signing is required." /><div className="network-grid"><section className="panel network-card"><div className="network-icon eth">◆</div><StatusBadge tone="green">Ethereum Sepolia</StatusBadge><h3>Ethereum wallet</h3><p>Connect an injected EVM wallet and read its Sepolia ETH balance.</p>{wallets.ethereum ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.ethereum.address)}</strong><span>{wallets.ethereum.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, ethereum: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={connectEthereum} disabled={Boolean(busy)}>{busy === "ethereum" ? "Connecting…" : "Connect Ethereum"}<span>↗</span></button>}</section><section className="panel network-card"><div className="network-icon sol">≋</div><StatusBadge tone="green">Solana Devnet</StatusBadge><h3>Solana wallet</h3><p>Connect an injected Solana wallet and read its balance from Devnet RPC.</p>{wallets.solana ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.solana.address)}</strong><span>{wallets.solana.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, solana: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={connectSolana} disabled={Boolean(busy)}>{busy === "solana" ? "Connecting…" : "Connect Solana"}<span>↗</span></button>}</section></div><TCurrHoldingCard walletAddress={wallets.ethereum?.address} contractAddress={tcurrAddress} draftAddress={tcurrDraft} onDraftAddress={setTCurrDraft} onSaveAddress={saveTCurrAddress} balance={tcurrBalance} loading={tcurrLoading} error={tcurrError} onRefresh={refreshTCurr} onAddToWallet={addTCurrToWallet} /><div className="info-strip"><span>ⓘ</span><div><strong>Live tCURR balance</strong><p>The tCURR card reads the connected Ethereum wallet on Sepolia from the selected contract. Demo admin holdings, airdrops, swaps, and purchases remain local simulations.</p></div></div></>}
+        {tab === "wallets" && <><SectionHead eyebrow="NETWORK ACCESS" title="Connect your wallets" body="Choose an installed wallet and approve the connection in your wallet. No address entry or transaction signature is required." right={<button className="primary-button" onClick={() => openWalletPicker("all")} disabled={Boolean(busy)}>Choose wallet <span>↗</span></button>} /><div className="network-grid"><section className="panel network-card"><div className="network-icon eth">◆</div><StatusBadge tone="green">Ethereum Sepolia</StatusBadge><h3>Ethereum wallet</h3><p>Choose an installed Ethereum wallet and read its Sepolia ETH balance.</p>{wallets.ethereum ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.ethereum.address)}</strong><span>{wallets.ethereum.name} · {wallets.ethereum.balance}</span></div><button className="secondary-button" onClick={() => { setSelectedEvm(null); setWallets((current) => ({ ...current, ethereum: undefined })); }}>Disconnect in portal</button></> : <button className="primary-button" onClick={() => openWalletPicker("ethereum")} disabled={Boolean(busy)}>{busy === "ethereum" ? "Connecting…" : "Choose Ethereum wallet"}<span>↗</span></button>}</section><section className="panel network-card"><div className="network-icon sol">≋</div><StatusBadge tone="green">Solana Devnet</StatusBadge><h3>Solana wallet</h3><p>Choose an installed Solana wallet and read its balance from Devnet RPC.</p>{wallets.solana ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.solana.address)}</strong><span>{wallets.solana.name} · {wallets.solana.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, solana: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={() => openWalletPicker("solana")} disabled={Boolean(busy)}>{busy === "solana" ? "Connecting…" : "Choose Solana wallet"}<span>↗</span></button>}</section></div><TCurrHoldingCard walletAddress={wallets.ethereum?.address} contractAddress={tcurrAddress} draftAddress={tcurrDraft} onDraftAddress={setTCurrDraft} onSaveAddress={saveTCurrAddress} balance={tcurrBalance} loading={tcurrLoading} error={tcurrError} onRefresh={refreshTCurr} onAddToWallet={addTCurrToWallet} /><div className="info-strip"><span>ⓘ</span><div><strong>Live tCURR balance</strong><p>The tCURR card reads the connected Ethereum wallet on Sepolia from the selected contract. Demo admin holdings, airdrops, swaps, and purchases remain local simulations.</p></div></div></>}
         {tab === "airdrop" && <><SectionHead eyebrow="DISTRIBUTION SIMULATOR" title="Airdrop overview" body="Review a proportional distribution based on simulated tCURR holdings. The final method awaits management approval." right={<StatusBadge tone="amber">Policy pending</StatusBadge>} /><div className="metrics metrics-two"><div className="metric-card"><div className="metric-top"><span>Proposed demo pool</span><span className="metric-symbol">✳</span></div><strong>{format(state.pool)} <small>{brand.utilitySymbol}</small></strong><div className="metric-foot">Set in admin simulator</div></div><div className="metric-card"><div className="metric-top"><span>Eligible demo holdings</span><span className="metric-symbol">▤</span></div><strong>{format(eligibleShares)} <small>{brand.sharesSymbol}</small></strong><div className="metric-foot">{allocations.length} eligible addresses</div></div></div><div className="two-column"><section className="panel"><div className="panel-heading"><div><div className="eyebrow">CURRENT SNAPSHOT</div><h3>{state.snapshot?.id || "No snapshot yet"}</h3></div><span className="heading-mark">✳</span></div>{state.snapshot ? <><div className="detail-row"><span>Created</span><strong>{new Date(state.snapshot.at).toLocaleString()}</strong></div><div className="detail-row"><span>Pool</span><strong>{format(state.snapshot.pool)} {brand.utilitySymbol}</strong></div><div className="detail-row"><span>Claims</span><strong>{state.snapshot.claims.length} / {state.snapshot.allocations.length}</strong></div><div className="detail-row"><span>Your allocation</span><strong>{ownClaim ? `${format(ownClaim.amount)} ${brand.utilitySymbol}` : "No matching connected address"}</strong></div><button className="primary-button full" onClick={claim} disabled={!ownClaim || hasClaimed}>{hasClaimed ? "Claimed in demo" : "Claim demo allocation"}<span>↗</span></button><p className="fine-print">Claim updates the browser-local demo ledger only.</p></> : <EmptyState title="Awaiting snapshot" body="Open Admin simulator to record a snapshot of eligible holdings." />}</section><section className="panel"><div className="panel-heading"><div><div className="eyebrow">HOW IT WORKS</div><h3>Proportional preview</h3></div><span className="heading-mark">◎</span></div><div className="steps"><div><span>01</span><p>Admin enters simulated tCURR holdings and eligibility.</p></div><div><span>02</span><p>The pool is divided by each eligible address&apos;s share of total eligible holdings.</p></div><div><span>03</span><p>A snapshot freezes allocations for local demo claims.</p></div></div><div className="formula">Allocation = pool × eligible shares / total eligible shares</div></section></div><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">LIVE PREVIEW</div><h3>Calculated allocations</h3></div><span className="subtle">Before snapshot</span></div><div className="table-wrap"><table><thead><tr><th>Address</th><th>tCURR</th><th>Share</th><th>uCURR preview</th></tr></thead><tbody>{allocations.map((row) => <tr key={row.address}><td className="mono">{shortAddress(row.address)}</td><td>{format(row.shares)}</td><td>{eligibleShares ? format(row.shares / eligibleShares * 100, 1) : 0}%</td><td><strong>{format(row.amount)}</strong></td></tr>)}</tbody></table></div>{!allocations.length && <EmptyState title="No eligible holdings" body="Add eligible holdings in the admin simulator." />}</section></>}
         {tab === "swap" && <><SectionHead eyebrow="TOKEN EXCHANGE" title="Swap demo" body="Explore a fixed-rate swap in the local demo ledger. No liquidity pool or blockchain transaction is involved." right={<StatusBadge>Simulation</StatusBadge>} /><div className="transaction-layout"><section className="panel transaction-card"><div className="transaction-top"><strong>Swap tokens</strong><span>Fixed demo rate</span></div><label className="swap-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={swapAmount} onChange={(event) => setSwapAmount(event.target.value)} aria-label="Swap amount" /><strong>{swapDirection === "u-to-usdc" ? "uCURR" : "Demo USDC"}</strong></div><small>Available: {format(state.balances[swapDirection === "u-to-usdc" ? "uCURR" : "USDC"], 2)}</small></label><button className="flip-button" onClick={() => setSwapDirection(swapDirection === "u-to-usdc" ? "usdc-to-u" : "u-to-usdc")} aria-label="Reverse swap direction">↓↑</button><div className="swap-box receive"><span>You receive (estimated)</span><div><strong className="receive-amount">{format((Number(swapAmount) || 0) * (swapDirection === "u-to-usdc" ? 0.1 : 10), 2)}</strong><strong>{swapDirection === "u-to-usdc" ? "Demo USDC" : "uCURR"}</strong></div><small>1 uCURR = 0.10 demo USDC</small></div><button className="primary-button full" onClick={doSwap}>Confirm demo swap <span>↗</span></button></section><div className="aside-stack"><div className="panel muted-panel"><div className="eyebrow">YOUR DEMO BALANCES</div><div className="balance-line"><span>uCURR</span><strong>{format(state.balances.uCURR, 2)}</strong></div><div className="balance-line"><span>Demo USDC</span><strong>{format(state.balances.USDC, 2)}</strong></div></div><div className="info-strip compact"><span>ⓘ</span><div><strong>Local simulation</strong><p>Rates and balances are illustrative. tCURR tokenized shares are excluded from swaps.</p></div></div></div></div></>}
         {tab === "buy" && <><SectionHead eyebrow="PAYMENT SANDBOX" title="Buy uCURR" body="Try a purchase flow with a simulated order. No payment provider or card network is connected." right={<StatusBadge tone="amber">No real charges</StatusBadge>} /><div className="transaction-layout"><section className="panel transaction-card"><div className="transaction-top"><strong>Sandbox purchase</strong><span>USD → uCURR</span></div><label className="field-label">Amount in USD<input type="number" min="1" max="10000" step="0.01" value={buyUsd} onChange={(event) => setBuyUsd(event.target.value)} /></label><div className="quote-card"><div><span>Demo rate</span><strong>$1 = 10 uCURR</strong></div><div><span>You receive</span><strong>{format((Number(buyUsd) || 0) * 10, 2)} uCURR</strong></div><div><span>Charge today</span><strong>$0.00</strong></div></div><button className="primary-button full" onClick={doBuy}>Create sandbox order <span>↗</span></button><p className="fine-print">Never enter card details. This flow cannot take payment.</p></section><section className="panel"><div className="panel-heading"><div><div className="eyebrow">ORDER HISTORY</div><h3>Sandbox orders</h3></div><span className="heading-mark">▣</span></div>{state.orders.length ? <div className="activity-list">{state.orders.map((order) => <div className="activity-row" key={order.id}><span className="activity-icon">↗</span><div><strong>{order.id}</strong><small>${format(order.usd, 2)} simulated → {format(order.amount)} uCURR</small></div><time>{new Date(order.at).toLocaleDateString()}</time></div>)}</div> : <EmptyState title="No orders yet" body="Create a sandbox order to see it here." />}</section></div></>}
@@ -328,5 +382,6 @@ export default function Portal() {
         {tab === "admin" && <><SectionHead eyebrow="OPERATIONS SIMULATOR" title="Admin dashboard" body="Model shareholder holdings and freeze a demo snapshot. This screen has no production access control." right={<StatusBadge tone="amber">Demo admin</StatusBadge>} /><div className="admin-warning"><span>!</span><p>Anyone with this demo can change local data. Do not use this route for production administration or real distributions.</p></div><div className="two-column"><section className="panel form-panel"><div className="panel-heading"><div><div className="eyebrow">HOLDING ENTRY</div><h3>Add or update tCURR</h3></div><span className="heading-mark">▤</span></div><label className="field-label">Wallet address<input value={holdingAddress} onChange={(event) => setHoldingAddress(event.target.value)} placeholder="0x… or Solana address" /></label><div className="form-row"><label className="field-label">tCURR units<input type="number" min="0" step="1" value={holdingShares} onChange={(event) => setHoldingShares(event.target.value)} /></label><label className="field-label">Eligible<select value={holdingEligible ? "yes" : "no"} onChange={(event) => setHoldingEligible(event.target.value === "yes")}><option value="yes">Yes</option><option value="no">No</option></select></label></div><div className="button-row"><button className="primary-button" onClick={saveHolding}>Save holding <span>↗</span></button><button className="secondary-button" onClick={() => setHoldingAddress(wallets.ethereum?.address || wallets.solana?.address || "")} disabled={!connectedAddresses.length}>Use connected wallet</button></div></section><section className="panel form-panel"><div className="panel-heading"><div><div className="eyebrow">DISTRIBUTION</div><h3>Snapshot settings</h3></div><span className="heading-mark">✳</span></div><label className="field-label">Demo uCURR pool<input type="number" min="0" step="1" value={state.pool} onChange={(event) => { const value = Number(event.target.value); if (Number.isSafeInteger(value) && value >= 0 && value <= 100000000) setState((previous) => ({ ...previous, pool: value })); }} /></label><div className="snapshot-preview"><div><span>Eligible addresses</span><strong>{allocations.length}</strong></div><div><span>Eligible holdings</span><strong>{format(eligibleShares)} tCURR</strong></div><div><span>Pool to distribute</span><strong>{format(state.pool)} uCURR</strong></div></div><button className="primary-button full" onClick={createSnapshot}>Create demo snapshot <span>↗</span></button><p className="fine-print">New snapshots replace the current local snapshot and reset its claim records.</p></section></div><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">SIMULATED CAP TABLE</div><h3>Shareholder holdings</h3></div><span className="subtle">{state.holdings.length} addresses</span></div><div className="table-wrap"><table><thead><tr><th>Wallet address</th><th>Chain format</th><th>tCURR</th><th>Eligibility</th><th></th></tr></thead><tbody>{state.holdings.map((holding) => <tr key={holding.address}><td className="mono" title={holding.address}>{shortAddress(holding.address)}</td><td>{holding.address.startsWith("0x") ? "Ethereum" : "Solana"}</td><td>{format(holding.shares)}</td><td><StatusBadge tone={holding.eligible ? "green" : "amber"}>{holding.eligible ? "Eligible" : "Excluded"}</StatusBadge></td><td><button className="table-action" onClick={() => { setHoldingAddress(holding.address); setHoldingShares(String(holding.shares)); setHoldingEligible(holding.eligible); }}>Edit</button></td></tr>)}</tbody></table></div></section></>}
       </div>
     </main>
+    <WalletPicker open={walletPickerChain !== null} chain={walletPickerChain || "all"} ethereum={evmOptions.map((wallet) => ({ id: wallet.id, name: wallet.name, onSelect: () => connectEthereum(wallet) }))} solana={solanaOptions.map((wallet) => ({ id: wallet.id, name: wallet.name, onSelect: () => connectSolana(wallet) }))} onClose={() => setWalletPickerChain(null)} onRefresh={refreshWalletOptions} />
   </div>;
 }

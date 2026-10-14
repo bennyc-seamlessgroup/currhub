@@ -9,8 +9,8 @@
 | 功能 | MVP 實作 | 資料來源 / 限制 |
 |---|---|---|
 | User Dashboard | 概覽、已連接錢包的真實 tCURR 餘額與最近示範活動 | tCURR 讀取 Sepolia 合約；其他數字仍為本機 demo ledger |
-| Ethereum Wallet | 透過注入式 EVM wallet 連接並切換 Sepolia，讀取 Sepolia ETH | Wallet provider；不簽交易 |
-| Solana Wallet | 透過注入式 Solana wallet 連接，向 Devnet RPC 讀取 SOL | 只查 Devnet；不能更改 wallet 自身網絡設定 |
+| Ethereum Wallet | 在網站選擇已安裝的 EVM wallet（EIP-6963 或注入式備援）、由 wallet 核准連接並切換 Sepolia，讀取 Sepolia ETH | 不用在聊天或網站手動輸入錢包地址；不簽交易 |
+| Solana Wallet | 在網站選擇偵測到的 Phantom、Solflare 或注入式 Solana wallet，向 Devnet RPC 讀取 SOL | 只查 Devnet；不能更改 wallet 自身網絡設定 |
 | uCURR / tCURR | 讀取已連接 Ethereum wallet 的 Sepolia tCURR ERC-20 餘額；另有示範 uCURR 帳本及可編譯的測試合約 | 須提供現有 Sepolia tCURR 合約地址；本 repo 沒有部署合約或鑄造 token |
 | Admin Dashboard | 輸入／更新示範 tCURR 持倉、資格、uCURR pool、建立 snapshot | 本機模擬；沒有真正管理員認證 |
 | Airdrop | 按 eligible tCURR 比例計算、固定 snapshot、每地址一次的 demo claim | claim 只更新本機 demo ledger；正式規則待主管決定 |
@@ -32,13 +32,15 @@ npm run dev
 
 ### 操作流程
 
-1. 在 **My wallets** 連接 Sepolia EVM wallet，輸入現有 Sepolia tCURR 合約地址，Portal 會讀取該錢包的真實 ERC-20 `balanceOf`。可按 **Add token to wallet** 讓 MetaMask 顯示此 token；匯入 token 不會增加餘額。Solana wallet 仍可連接並讀取 Devnet SOL。
+1. 在 **My wallets** 按 **Choose wallet**，選擇瀏覽器已安裝的錢包並在錢包內批准連接。Portal 自動取得該錢包的公開地址，不需把錢包地址發給開發者。若有已部署的 Sepolia tCURR 合約，輸入其**合約地址**（不是錢包地址），Portal 會讀取該錢包的真實 ERC-20 `balanceOf`。可按 **Add token to wallet** 讓錢包顯示此 token；匯入 token 不會增加餘額。Solana wallet 仍可連接並讀取 Devnet SOL。
 2. 在 **Account & KYC** 用測試資料建立 demo account，填地區並標記 demo KYC approved。這不是正式 KYC。
 3. 在 **Admin simulator** 將已連接 wallet 地址加入示範 tCURR 持倉，設為 eligible，設定 pool，再建立 demo snapshot。
 4. 在 **Airdrop** 查看固定於該 snapshot 的 allocation 並記錄 demo claim。更改持倉不會改動既有 snapshot；建立新 snapshot 才會重算，並清空該 snapshot 的 claim 紀錄。
 5. 在 **Swap demo** 和 **Buy sandbox** 試用本機示範流程。頁面會明確顯示沒有鏈上交易或扣款。
 
 瀏覽器資料儲存在 `localStorage`。不同裝置、瀏覽器或使用者之間不會同步；清除瀏覽器資料即會失去紀錄。**不能把 localStorage 用作正式帳本、空投資格或已完成 claim 的證明。**
+
+錢包選單目前支援**同一瀏覽器中已安裝的錢包擴充套件**。尚未加入 WalletConnect QR code 或手機遠端連接，亦沒有錢包登入簽名。錢包連接只授權網站查看公開地址及讀取測試網資料。
 
 ## 測試代幣合約範本
 

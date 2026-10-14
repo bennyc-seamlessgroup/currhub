@@ -52,7 +52,7 @@ export default function TCurrHoldingCard({
         </label>
         <button className="secondary-button" onClick={onSaveAddress}>Use this contract</button>
         {contractAddress && <p className="fine-print">Active: <span className="mono">{contractAddress}</span></p>}
-        <p className="fine-print">The address is public. The portal checks for contract code and reads ERC-20 metadata and balance from Sepolia. Adding a token to a wallet does not mint any tokens.</p>
+        <p className="fine-print">This is the token contract address, not your wallet address. The Portal gets your wallet address when you connect. It checks for contract code and reads the balance from Sepolia. Adding a token to a wallet does not mint any tokens.</p>
       </div>
     </div>
   </section>;
