@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import solc from "solc";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const names = ["UCURRTest.sol", "TCURRTest.sol"];
+const names = ["UCURRTest.sol", "TCURRTest.sol", "UCURRAirdrop.sol"];
 const sources = Object.fromEntries(names.map((name) => [name, { content: fs.readFileSync(path.join(root, "contracts", name), "utf8") }]));
 const input = { language: "Solidity", sources, settings: { optimizer: { enabled: true, runs: 200 }, outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } } };
 const output = JSON.parse(solc.compile(JSON.stringify(input), { import: (importPath) => {

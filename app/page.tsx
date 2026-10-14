@@ -6,6 +6,7 @@ import { brand } from "@/lib/brand";
 import { readTCurrBalance, readTokenBalance, readTokenOwner, suggestTokenInWallet, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
 import WalletPicker, { type WalletChoice } from "@/components/WalletPicker";
 import SwapPanel from "@/components/SwapPanel";
+import AirdropPanel from "@/components/AirdropPanel";
 import { clearWalletSession, readWalletSession, saveWalletSession } from "@/lib/wallet-session";
 
 type Tab = "balance" | "swap" | "buy" | "airdrop";
@@ -81,7 +82,6 @@ export default function Portal() {
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
   const restoringRef = useRef(false);
-  const [kycAction, setKycAction] = useState<"airdrop" | null>(null);
   const [tokenOwnerWallet, setTokenOwnerWallet] = useState("");
   const tcurrAddress = TCURR_SEPOLIA_ADDRESS;
   const [tcurrBalance, setTcurrBalance] = useState<TCurrBalance | null>(null);
@@ -303,7 +303,6 @@ export default function Portal() {
       setSelectedEvm(wallet);
       setWallets({ ethereum: { address: accounts[0], balance: `${displayAmount(Number(BigInt(raw)) / 1e18)} ETH`, name: wallet.name } });
       saveWalletSession({ chain: "ethereum", address: accounts[0], id: wallet.id, name: wallet.name, rdns: wallet.rdns });
-      setTab("balance");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not connect wallet."); }
     finally { setBusy(false); }
   }
@@ -320,7 +319,6 @@ export default function Portal() {
       setSelectedEvm(null);
       setWallets({ solana: { address, balance, name: wallet.name } });
       saveWalletSession({ chain: "solana", address, id: wallet.id, name: wallet.name });
-      setTab("balance");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not connect wallet."); }
     finally { setBusy(false); }
   }
@@ -362,12 +360,8 @@ export default function Portal() {
     } catch (error) { setNotice(walletImportError(error)); }
   }
 
-  function requestAirdrop() {
-    if (!wallets.ethereum && !wallets.solana) { setPickerOpen(true); return; }
-    setKycAction("airdrop");
-  }
-
   function disconnectWallet() {
+    void fetch("/api/airdrop/auth", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) }).catch(() => {});
     clearWalletSession();
     setWalletMenuOpen(false);
     setWallets({});
@@ -404,7 +398,7 @@ export default function Portal() {
       </div>
     </div></header>
     <main className="main-container">
-      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? connected ? "Your tokenized shares and rewards" : "Connect your tokenized shares wallet" : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? wallets.solana ? "tCURR and uCURR are currently on Ethereum Sepolia. Switch to an Ethereum wallet to view them." : "View your tCURR and uCURR test token balances. Future uCURR rewards are not open yet." : tab === "swap" ? "Exchange uCURR and USDC directly from your wallet." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "Your tCURR balance is visible now. Airdrop claims will open after the rules are approved."}</p></div>{tab === "balance" && connected && <div className="page-top-actions">{wallets.ethereum && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</span><strong>{wallets.ethereum.balance}</strong></div>}{wallets.solana && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</span><strong>{wallets.solana.balance}</strong></div>}{wallets.ethereum && <button className="outline-button" onClick={refreshBalance} disabled={tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>}</div>
+      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? connected ? "Your tokenized shares and rewards" : "Connect your tokenized shares wallet" : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? wallets.solana ? "tCURR and uCURR are currently on Ethereum Sepolia. Switch to an Ethereum wallet to view them." : "View your tCURR and uCURR test token balances and check for rewards." : tab === "swap" ? "Exchange uCURR and USDC directly from your wallet." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "See available uCURR rewards and claim them to your connected wallet."}</p></div>{tab === "balance" && connected && <div className="page-top-actions">{wallets.ethereum && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</span><strong>{wallets.ethereum.balance}</strong></div>}{wallets.solana && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</span><strong>{wallets.solana.balance}</strong></div>}{wallets.ethereum && <button className="outline-button" onClick={refreshBalance} disabled={tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>}</div>
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss message">×</button></div>}
 
       {tab === "balance" && <>
@@ -414,6 +408,7 @@ export default function Portal() {
           <section className="balance-card token-card utility-card"><div className="card-kicker"><span className="coin-symbol utility-symbol">u</span> uCURR <span className="card-network">SEPOLIA</span></div><div className={wallets.ethereum && ucurrBalance ? "large-balance" : "large-balance empty-balance"}>{utilityBalanceLabel}</div><div className="balance-caption">{wallets.solana ? ethereumOnlyNote : ucurrError || (ucurrBalance ? "Your uCURR test token balance" : "Utility token for future rewards")}</div>{wallets.ethereum && ucurrBalance && <button className="import-button" onClick={addUcurrToWallet}>Not showing in your wallet? Add uCURR <span aria-hidden="true">↗</span></button>}</section>
         </div>
         {isTokenOwner && <a className="token-guide-link" href="/setup">New to test tokens? Follow the Sepolia ETH and token setup guide <span aria-hidden="true">→</span></a>}
+        {isTokenOwner && <a className="token-guide-link" href="/admin">Manage airdrops <span aria-hidden="true">→</span></a>}
         {wallets.solana && <a className="token-guide-link" href="/setup?chain=solana">Prepare Solana Devnet test tokens <span aria-hidden="true">→</span></a>}
       </>}
 
@@ -421,9 +416,8 @@ export default function Portal() {
 
       {tab === "buy" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Purchase preview</h2><span className="preview-pill">SANDBOX</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={buyAmount} onChange={(event) => setBuyAmount(event.target.value)} aria-label="Purchase amount in US dollars" /><strong>USD</strong></div></label><div className="quote-line"><span>Illustrative uCURR amount</span><strong>{displayAmount(Math.max(0, Number(buyAmount) || 0) * 10, 2)} uCURR</strong></div><div className="quote-line"><span>Charged today</span><strong>$0.00</strong></div><p className="transaction-note">Preview only. No card details are collected, and no charge or token delivery occurs.</p></section><aside className="feature-aside"><div className="aside-icon">◈</div><h3>A safe first look</h3><p>Card checkout is not connected yet. This page only shows an example amount.</p></aside></div>}
 
-      {tab === "airdrop" && <div className="feature-layout"><section className="feature-card airdrop-card"><span className="preview-pill">NOT OPEN YET</span><h2>Your tCURR matters here</h2><p>When the airdrop rules are approved, this page will show eligibility for your connected wallet.</p><div className="airdrop-holding"><span>Your tCURR on Sepolia</span><strong>{tcurrBalance ? `${tcurrBalance.display} tCURR` : wallets.ethereum ? tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : "—" : "Connect wallet"}</strong></div><button className="primary-button full-button" onClick={requestAirdrop}>{connected ? "Check airdrop status" : "Connect wallet"}<ArrowIcon /></button><p className="transaction-note">No allocation or claim is available yet.</p></section><aside className="feature-aside"><div className="aside-icon">✦</div><h3>What happens next?</h3><p>Eligibility rules, the snapshot, and the claim process are awaiting approval. Identity verification will be required to claim.</p></aside></div>}
+      {tab === "airdrop" && <AirdropPanel provider={selectedEvm?.provider || null} address={wallets.ethereum?.address || ""} solanaConnected={Boolean(wallets.solana)} onConnect={() => { refreshWalletOptions(); setPickerOpen(true); }} currentTCurr={tcurrBalance?.display ?? (tcurrError ? "Unavailable" : null)} onClaim={refreshBalance} />}
     </main>
     <WalletPicker open={pickerOpen} choices={walletChoices} onClose={() => setPickerOpen(false)} onRefresh={refreshWalletOptions} />
-    {kycAction && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setKycAction(null); }}><div className="status-modal" role="dialog" aria-modal="true" aria-labelledby="kyc-modal-title"><button className="icon-button modal-close" onClick={() => setKycAction(null)} aria-label="Close">×</button><span className="status-modal-icon">◎</span><h2 id="kyc-modal-title">Identity check required</h2><p>Airdrop claims will require identity verification. Verification is not available in this test version, so no action was submitted.</p><button className="primary-button full-button" onClick={() => setKycAction(null)}>Got it</button></div></div>}
   </div>;
 }

@@ -187,3 +187,36 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 @media(max-width:690px){.header-inner{min-height:0;padding:16px 18px 0;flex-wrap:wrap;gap:14px}.brand-button{font-size:18px}.brand-mark{width:33px;height:33px;font-size:20px}.header-wallet-menu{margin-left:auto}.header-wallet-button{padding:8px 11px;font-size:12px;min-height:37px}.top-nav{order:3;width:100%;overflow-x:auto;margin:0 -18px;padding:0 18px 10px}.tab{padding:10px 12px}.main-container{padding:36px 18px 65px}.page-top{align-items:start;flex-direction:column;gap:17px}.page-top p{font-size:14px}.page-top-actions{flex-direction:row;align-items:center;justify-content:space-between;width:100%}.native-balance{min-width:0}.connect-hero{padding:25px;gap:18px;min-height:0}.hero-symbol .brand-mark{width:52px;height:52px;border-radius:17px;font-size:32px}.connect-hero h2{font-size:22px}.connect-hero p{font-size:13px}.balance-grid{grid-template-columns:1fr;gap:13px}.balance-card.token-card{padding:26px;min-height:255px}.large-balance{margin-top:35px}.large-balance.empty-balance{margin-top:40px}.feature-layout{grid-template-columns:1fr;gap:0}.feature-card{padding:22px}.feature-aside{padding:30px 12px}.feature-aside p{max-width:none}.airdrop-holding{align-items:start;flex-direction:column}.airdrop-holding strong{text-align:left}}
 @media(max-width:410px){.connect-hero{display:block}.hero-symbol{margin-bottom:16px}.card-network{font-size:9px}.setting-row{flex-direction:column}.wallet-modal{padding:20px}.wallet-choice{gap:9px}.wallet-logo{width:38px;height:38px;flex-basis:38px}.choice-end{font-size:11px}}
 @media(max-width:690px){.setup-grid,.pool-deposit-grid{grid-template-columns:1fr}.setup-token-card{min-height:0}.setup-intro{padding:22px}.setup-token-card{padding:22px}.setup-chain-tabs{width:100%}.setup-chain-tab{flex:1;padding:11px 8px;font-size:12px}}
+.airdrop-round{border:1px solid #e5eaf3;border-radius:14px;padding:18px;margin:17px 0;background:#fbfcff}
+.airdrop-round-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:#223755}
+.airdrop-round-head span{font-size:12px;color:#8794a8}
+.airdrop-round p{font-size:14px!important;margin:13px 0 0!important}
+.airdrop-round .primary-button{margin-top:17px}
+.airdrop-identity-form{margin-top:25px;padding-top:23px;border-top:1px solid #e9edf4}
+.airdrop-identity-form h3{font-size:19px;margin-bottom:7px}
+.airdrop-identity-form label,.admin-fields label{display:block;font-size:13px;font-weight:800;color:#677895;margin:13px 0}
+.airdrop-identity-form label input:not([type=checkbox]),.admin-fields input,.admin-setting-row input,.admin-select{display:block;width:100%;border:1px solid #dce4ef;border-radius:10px;padding:11px 13px;margin-top:7px;color:#263a58;background:#fff;font-size:14px}
+.airdrop-check{display:flex!important;align-items:flex-start;gap:9px;line-height:1.5;font-size:13px!important;font-weight:500!important}
+.airdrop-check input{margin:3px 0 0;flex-shrink:0}
+.airdrop-review-status{margin:20px 0 0!important;color:#5065af!important;font-size:13px!important}
+.admin-container{max-width:1000px}
+.admin-stack{display:grid;gap:20px}
+.admin-stack .feature-card>p{font-size:14px;color:#76859b;line-height:1.6;margin:12px 0 20px}
+.admin-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px;margin:14px 0 20px}
+.admin-setting-row{display:flex;gap:10px;align-items:end;margin-top:17px}
+.admin-setting-row input{margin:0;min-width:0}
+.admin-list{border:1px solid #e7ecf4;border-radius:12px;overflow:hidden;margin:15px 0}
+.admin-list-row{display:flex;align-items:center;justify-content:space-between;gap:13px;padding:13px 15px;border-bottom:1px solid #e7ecf4;font-size:13px}
+.admin-list-row:last-child{border-bottom:0}
+.admin-list-row>div:first-child{display:grid;gap:4px}
+.admin-list-row span,.admin-list-row small{color:#718199}
+.admin-row-actions{display:flex;gap:7px}
+.admin-row-actions .outline-button{min-height:35px;padding:7px 11px}
+.admin-select{max-width:100%;margin:15px 0}
+.admin-summary{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.admin-summary>span{display:inline-block;border:1px solid #e7ecf4;border-radius:9px;padding:10px 12px;color:#75849b;font-size:13px}
+.admin-summary strong{color:#2c4265}
+.admin-confirm{margin:17px 0!important}
+.admin-publish{display:flex;margin-top:14px}
+.admin-link{color:#435fc6;overflow-wrap:anywhere;font-weight:700}
+@media(max-width:690px){.admin-fields{grid-template-columns:1fr}.admin-setting-row,.admin-list-row{align-items:stretch;flex-direction:column}.admin-row-actions{flex-wrap:wrap}}
