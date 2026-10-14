@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { brand } from "@/lib/brand";
 import { addressKey, calculateAirdrop, claimAllocation } from "@/lib/airdrop.mjs";
+import { readTCurrBalance, suggestTokenInWallet, validEthereumAddress, type TCurrBalance } from "@/lib/tcurr";
+import TCurrHoldingCard from "@/components/TCurrHoldingCard";
 
 type Chain = "ethereum" | "solana";
 type Tab = "overview" | "wallets" | "airdrop" | "swap" | "buy" | "account" | "admin";
@@ -24,6 +26,7 @@ type DemoState = {
 type Wallet = { address: string; balance: string };
 
 const STORAGE_KEY = "currhub-mvp-v1";
+const TOKEN_ADDRESS_KEY = "currhub-tcurr-sepolia-contract";
 const SEPOLIA_CHAIN_ID = "0xaa36a7";
 const SOLANA_RPC = process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC || "https://api.devnet.solana.com";
 const nav: { id: Tab; label: string; icon: string; group: string }[] = [
@@ -71,7 +74,11 @@ function log(state: DemoState, title: string, detail: string): DemoState {
 
 declare global {
   interface Window {
-    ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> };
+    ethereum?: {
+      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+      on?: (event: string, listener: (...args: unknown[]) => void) => void;
+      removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+    };
     solana?: { connect: () => Promise<{ publicKey: { toString: () => string } }>; publicKey?: { toString: () => string } };
     phantom?: { solana?: Window["solana"] };
   }
@@ -95,6 +102,11 @@ export default function Portal() {
   const [state, setState] = useState<DemoState>(initialState);
   const [ready, setReady] = useState(false);
   const [wallets, setWallets] = useState<Partial<Record<Chain, Wallet>>>({});
+  const [tcurrAddress, setTCurrAddress] = useState(process.env.NEXT_PUBLIC_TCURR_SEPOLIA_ADDRESS || "");
+  const [tcurrDraft, setTCurrDraft] = useState(process.env.NEXT_PUBLIC_TCURR_SEPOLIA_ADDRESS || "");
+  const [tcurrBalance, setTCurrBalance] = useState<TCurrBalance | null>(null);
+  const [tcurrLoading, setTCurrLoading] = useState(false);
+  const [tcurrError, setTCurrError] = useState("");
   const [busy, setBusy] = useState<Chain | null>(null);
   const [notice, setNotice] = useState("");
   const [holdingAddress, setHoldingAddress] = useState("");
@@ -113,12 +125,53 @@ export default function Portal() {
         if (Array.isArray(parsed.holdings) && parsed.balances && Array.isArray(parsed.activity)) setState(parsed);
       }
     } catch { /* Corrupt browser demo data is ignored. */ }
+    try {
+      const savedAddress = localStorage.getItem(TOKEN_ADDRESS_KEY);
+      if (savedAddress && validEthereumAddress(savedAddress)) {
+        setTCurrAddress(savedAddress);
+        setTCurrDraft(savedAddress);
+      }
+    } catch { /* Private browsing may block storage. */ }
     setReady(true);
   }, []);
   useEffect(() => { if (ready) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* Private browsing may block storage. */ } } }, [ready, state]);
   useEffect(() => {
     if (state.profile) setProfileForm({ name: state.profile.name, email: state.profile.email, country: state.profile.country });
   }, [state.profile?.name, state.profile?.email, state.profile?.country]);
+  useEffect(() => {
+    const address = wallets.ethereum?.address;
+    if (!address || !tcurrAddress || !window.ethereum) {
+      setTCurrBalance(null);
+      setTCurrError("");
+      setTCurrLoading(false);
+      return;
+    }
+    let active = true;
+    setTCurrLoading(true);
+    setTCurrBalance(null);
+    setTCurrError("");
+    readTCurrBalance(window.ethereum, tcurrAddress, address)
+      .then((result) => { if (active) setTCurrBalance(result); })
+      .catch((error) => { if (active) setTCurrError(error instanceof Error ? error.message : "Could not read tCURR balance."); })
+      .finally(() => { if (active) setTCurrLoading(false); });
+    return () => { active = false; };
+  }, [wallets.ethereum?.address, tcurrAddress]);
+  useEffect(() => {
+    const ethereum = window.ethereum;
+    if (!ethereum?.on) return;
+    const clearConnectedWallet = () => {
+      setWallets((current) => ({ ...current, ethereum: undefined }));
+      setTCurrBalance(null);
+      setTCurrError("");
+      setNotice("Wallet account or network changed. Reconnect to read the correct balance.");
+    };
+    ethereum.on("accountsChanged", clearConnectedWallet);
+    ethereum.on("chainChanged", clearConnectedWallet);
+    return () => {
+      ethereum.removeListener?.("accountsChanged", clearConnectedWallet);
+      ethereum.removeListener?.("chainChanged", clearConnectedWallet);
+    };
+  }, []);
 
   const allocations = useMemo(() => {
     try { return calculateAirdrop(state.holdings, state.pool) as Allocation[]; }
@@ -128,6 +181,28 @@ export default function Portal() {
   const connectedAddresses = [wallets.ethereum?.address, wallets.solana?.address].filter((x): x is string => Boolean(x));
   const ownClaim = connectedAddresses.map((address) => claimAllocation(state.snapshot, address) as Allocation | null).find(Boolean);
   const hasClaimed = Boolean(ownClaim && state.snapshot?.claims.includes(addressKey(ownClaim.address)));
+
+  function saveTCurrAddress() {
+    const address = tcurrDraft.trim();
+    if (!validEthereumAddress(address)) return setNotice("Enter a valid Ethereum tCURR contract address.");
+    setTCurrAddress(address);
+    try { localStorage.setItem(TOKEN_ADDRESS_KEY, address); } catch { /* Storage is optional. */ }
+    setNotice(wallets.ethereum ? "tCURR contract selected. Reading your Sepolia wallet balance." : "tCURR contract selected. Connect your Ethereum wallet to read its Sepolia balance.");
+  }
+  async function refreshTCurr() {
+    if (!window.ethereum || !wallets.ethereum?.address || !tcurrAddress) return;
+    setTCurrLoading(true); setTCurrError("");
+    try { setTCurrBalance(await readTCurrBalance(window.ethereum, tcurrAddress, wallets.ethereum.address)); }
+    catch (error) { setTCurrBalance(null); setTCurrError(error instanceof Error ? error.message : "Could not read tCURR balance."); }
+    finally { setTCurrLoading(false); }
+  }
+  async function addTCurrToWallet() {
+    if (!window.ethereum || !tcurrBalance) return;
+    try {
+      await suggestTokenInWallet(window.ethereum, tcurrBalance);
+      setNotice("Token import was suggested to your wallet. Check the wallet to confirm it appears.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Wallet did not accept the token import request."); }
+  }
 
   function saveProfile() {
     const name = profileForm.name.trim();
@@ -241,11 +316,11 @@ export default function Portal() {
         {notice && <div className="notice" role="status"><span>ⓘ</span>{notice}<button onClick={() => setNotice("")} aria-label="Dismiss notice">×</button></div>}
         {tab === "overview" && <>
           <div className="welcome"><div><div className="eyebrow">YOUR WORKSPACE</div><h1>{state.profile ? `Welcome back, ${state.profile.name.split(" ")[0]}.` : "Your digital assets, in one place."}</h1><p>{brand.description}</p></div><div className="welcome-art" aria-hidden="true"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="art-core"><IconMark /></div><span className="art-star star-one">✦</span><span className="art-star star-two">✧</span></div></div>
-          <div className="metrics"><div className="metric-card"><div className="metric-top"><span>Demo portfolio</span><span className="metric-symbol">◈</span></div><strong>{format(state.balances.uCURR)} <small>{brand.utilitySymbol}</small></strong><div className="metric-foot">Local demo ledger</div></div><div className="metric-card"><div className="metric-top"><span>Shareholder holdings</span><span className="metric-symbol">▤</span></div><strong>{format(state.holdings.reduce((sum, row) => sum + row.shares, 0))} <small>{brand.sharesSymbol}</small></strong><div className="metric-foot">Simulated across {state.holdings.length} addresses</div></div><div className="metric-card"><div className="metric-top"><span>Current snapshot</span><span className="metric-symbol">✳</span></div><strong className="metric-text">{state.snapshot ? state.snapshot.id : "Not created"}</strong><div className="metric-foot">{state.snapshot ? `${state.snapshot.allocations.length} eligible allocations` : "Awaiting admin simulation"}</div></div></div>
+          <div className="metrics"><div className="metric-card"><div className="metric-top"><span>Demo portfolio</span><span className="metric-symbol">◈</span></div><strong>{format(state.balances.uCURR)} <small>{brand.utilitySymbol}</small></strong><div className="metric-foot">Local demo ledger</div></div><div className="metric-card"><div className="metric-top"><span>My on-chain tCURR</span><span className="metric-symbol">▤</span></div><strong className={tcurrBalance ? "" : "metric-text"}>{tcurrBalance ? tcurrBalance.display : tcurrLoading ? "Reading…" : wallets.ethereum ? tcurrAddress ? "Unavailable" : "Set contract" : "Connect wallet"} {tcurrBalance && <small>tCURR</small>}</strong><div className="metric-foot">Ethereum Sepolia · {tcurrBalance ? "Live wallet balance" : "See My wallets to connect"}</div></div><div className="metric-card"><div className="metric-top"><span>Current snapshot</span><span className="metric-symbol">✳</span></div><strong className="metric-text">{state.snapshot ? state.snapshot.id : "Not created"}</strong><div className="metric-foot">{state.snapshot ? `${state.snapshot.allocations.length} eligible allocations` : "Awaiting admin simulation"}</div></div></div>
           <div className="two-column"><section className="panel"><div className="panel-heading"><div><div className="eyebrow">GET STARTED</div><h3>Quick actions</h3></div><span className="heading-mark">↗</span></div><div className="quick-grid"><button onClick={() => setTab("wallets")}><span className="quick-icon blue">◇</span><strong>Connect wallet</strong><small>Sepolia or Devnet</small><span className="quick-arrow">↗</span></button><button onClick={() => setTab("airdrop")}><span className="quick-icon purple">✳</span><strong>View airdrop</strong><small>Preview allocations</small><span className="quick-arrow">↗</span></button><button onClick={() => setTab("swap")}><span className="quick-icon peach">⇄</span><strong>Try swap</strong><small>Demo balances only</small><span className="quick-arrow">↗</span></button></div></section><section className="panel"><div className="panel-heading"><div><div className="eyebrow">ACTIVITY</div><h3>Recent events</h3></div><span className="heading-mark">◷</span></div>{state.activity.length ? <div className="activity-list">{state.activity.slice(0, 3).map((item) => <div className="activity-row" key={item.id}><span className="activity-icon">↗</span><div><strong>{item.title}</strong><small>{item.detail}</small></div><time>{new Date(item.at).toLocaleDateString()}</time></div>)}</div> : <EmptyState title="No activity yet" body="Your demo activity will appear here as you explore." />}</section></div>
-          <div className="info-strip"><span>ⓘ</span><div><strong>Built for exploration</strong><p>Wallet connections read testnet balances. Token, airdrop, swap, and purchase actions are browser-local simulations.</p></div></div>
+          <div className="info-strip"><span>ⓘ</span><div><strong>Built for exploration</strong><p>Wallet connections read testnet balances, including tCURR on Sepolia when its contract is set. Airdrop, swap, and purchase actions remain browser-local simulations.</p></div></div>
         </>}
-        {tab === "wallets" && <><SectionHead eyebrow="NETWORK ACCESS" title="Connect your wallets" body="Read balances from Ethereum Sepolia and Solana Devnet. No transaction signing is required." /><div className="network-grid"><section className="panel network-card"><div className="network-icon eth">◆</div><StatusBadge tone="green">Ethereum Sepolia</StatusBadge><h3>Ethereum wallet</h3><p>Connect an injected EVM wallet and read its Sepolia ETH balance.</p>{wallets.ethereum ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.ethereum.address)}</strong><span>{wallets.ethereum.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, ethereum: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={connectEthereum} disabled={Boolean(busy)}>{busy === "ethereum" ? "Connecting…" : "Connect Ethereum"}<span>↗</span></button>}</section><section className="panel network-card"><div className="network-icon sol">≋</div><StatusBadge tone="green">Solana Devnet</StatusBadge><h3>Solana wallet</h3><p>Connect an injected Solana wallet and read its balance from Devnet RPC.</p>{wallets.solana ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.solana.address)}</strong><span>{wallets.solana.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, solana: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={connectSolana} disabled={Boolean(busy)}>{busy === "solana" ? "Connecting…" : "Connect Solana"}<span>↗</span></button>}</section></div><div className="info-strip"><span>ⓘ</span><div><strong>Testnet connection only</strong><p>uCURR and tCURR have no deployed contract or mint in this MVP. Shown token amounts live in this browser&apos;s demo ledger.</p></div></div></>}
+        {tab === "wallets" && <><SectionHead eyebrow="NETWORK ACCESS" title="Connect your wallets" body="Read balances from Ethereum Sepolia and Solana Devnet. No transaction signing is required." /><div className="network-grid"><section className="panel network-card"><div className="network-icon eth">◆</div><StatusBadge tone="green">Ethereum Sepolia</StatusBadge><h3>Ethereum wallet</h3><p>Connect an injected EVM wallet and read its Sepolia ETH balance.</p>{wallets.ethereum ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.ethereum.address)}</strong><span>{wallets.ethereum.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, ethereum: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={connectEthereum} disabled={Boolean(busy)}>{busy === "ethereum" ? "Connecting…" : "Connect Ethereum"}<span>↗</span></button>}</section><section className="panel network-card"><div className="network-icon sol">≋</div><StatusBadge tone="green">Solana Devnet</StatusBadge><h3>Solana wallet</h3><p>Connect an injected Solana wallet and read its balance from Devnet RPC.</p>{wallets.solana ? <><div className="wallet-address"><small>CONNECTED ADDRESS</small><strong>{shortAddress(wallets.solana.address)}</strong><span>{wallets.solana.balance}</span></div><button className="secondary-button" onClick={() => setWallets((current) => ({ ...current, solana: undefined }))}>Disconnect in portal</button></> : <button className="primary-button" onClick={connectSolana} disabled={Boolean(busy)}>{busy === "solana" ? "Connecting…" : "Connect Solana"}<span>↗</span></button>}</section></div><TCurrHoldingCard walletAddress={wallets.ethereum?.address} contractAddress={tcurrAddress} draftAddress={tcurrDraft} onDraftAddress={setTCurrDraft} onSaveAddress={saveTCurrAddress} balance={tcurrBalance} loading={tcurrLoading} error={tcurrError} onRefresh={refreshTCurr} onAddToWallet={addTCurrToWallet} /><div className="info-strip"><span>ⓘ</span><div><strong>Live tCURR balance</strong><p>The tCURR card reads the connected Ethereum wallet on Sepolia from the selected contract. Demo admin holdings, airdrops, swaps, and purchases remain local simulations.</p></div></div></>}
         {tab === "airdrop" && <><SectionHead eyebrow="DISTRIBUTION SIMULATOR" title="Airdrop overview" body="Review a proportional distribution based on simulated tCURR holdings. The final method awaits management approval." right={<StatusBadge tone="amber">Policy pending</StatusBadge>} /><div className="metrics metrics-two"><div className="metric-card"><div className="metric-top"><span>Proposed demo pool</span><span className="metric-symbol">✳</span></div><strong>{format(state.pool)} <small>{brand.utilitySymbol}</small></strong><div className="metric-foot">Set in admin simulator</div></div><div className="metric-card"><div className="metric-top"><span>Eligible demo holdings</span><span className="metric-symbol">▤</span></div><strong>{format(eligibleShares)} <small>{brand.sharesSymbol}</small></strong><div className="metric-foot">{allocations.length} eligible addresses</div></div></div><div className="two-column"><section className="panel"><div className="panel-heading"><div><div className="eyebrow">CURRENT SNAPSHOT</div><h3>{state.snapshot?.id || "No snapshot yet"}</h3></div><span className="heading-mark">✳</span></div>{state.snapshot ? <><div className="detail-row"><span>Created</span><strong>{new Date(state.snapshot.at).toLocaleString()}</strong></div><div className="detail-row"><span>Pool</span><strong>{format(state.snapshot.pool)} {brand.utilitySymbol}</strong></div><div className="detail-row"><span>Claims</span><strong>{state.snapshot.claims.length} / {state.snapshot.allocations.length}</strong></div><div className="detail-row"><span>Your allocation</span><strong>{ownClaim ? `${format(ownClaim.amount)} ${brand.utilitySymbol}` : "No matching connected address"}</strong></div><button className="primary-button full" onClick={claim} disabled={!ownClaim || hasClaimed}>{hasClaimed ? "Claimed in demo" : "Claim demo allocation"}<span>↗</span></button><p className="fine-print">Claim updates the browser-local demo ledger only.</p></> : <EmptyState title="Awaiting snapshot" body="Open Admin simulator to record a snapshot of eligible holdings." />}</section><section className="panel"><div className="panel-heading"><div><div className="eyebrow">HOW IT WORKS</div><h3>Proportional preview</h3></div><span className="heading-mark">◎</span></div><div className="steps"><div><span>01</span><p>Admin enters simulated tCURR holdings and eligibility.</p></div><div><span>02</span><p>The pool is divided by each eligible address&apos;s share of total eligible holdings.</p></div><div><span>03</span><p>A snapshot freezes allocations for local demo claims.</p></div></div><div className="formula">Allocation = pool × eligible shares / total eligible shares</div></section></div><section className="panel table-panel"><div className="panel-heading"><div><div className="eyebrow">LIVE PREVIEW</div><h3>Calculated allocations</h3></div><span className="subtle">Before snapshot</span></div><div className="table-wrap"><table><thead><tr><th>Address</th><th>tCURR</th><th>Share</th><th>uCURR preview</th></tr></thead><tbody>{allocations.map((row) => <tr key={row.address}><td className="mono">{shortAddress(row.address)}</td><td>{format(row.shares)}</td><td>{eligibleShares ? format(row.shares / eligibleShares * 100, 1) : 0}%</td><td><strong>{format(row.amount)}</strong></td></tr>)}</tbody></table></div>{!allocations.length && <EmptyState title="No eligible holdings" body="Add eligible holdings in the admin simulator." />}</section></>}
         {tab === "swap" && <><SectionHead eyebrow="TOKEN EXCHANGE" title="Swap demo" body="Explore a fixed-rate swap in the local demo ledger. No liquidity pool or blockchain transaction is involved." right={<StatusBadge>Simulation</StatusBadge>} /><div className="transaction-layout"><section className="panel transaction-card"><div className="transaction-top"><strong>Swap tokens</strong><span>Fixed demo rate</span></div><label className="swap-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={swapAmount} onChange={(event) => setSwapAmount(event.target.value)} aria-label="Swap amount" /><strong>{swapDirection === "u-to-usdc" ? "uCURR" : "Demo USDC"}</strong></div><small>Available: {format(state.balances[swapDirection === "u-to-usdc" ? "uCURR" : "USDC"], 2)}</small></label><button className="flip-button" onClick={() => setSwapDirection(swapDirection === "u-to-usdc" ? "usdc-to-u" : "u-to-usdc")} aria-label="Reverse swap direction">↓↑</button><div className="swap-box receive"><span>You receive (estimated)</span><div><strong className="receive-amount">{format((Number(swapAmount) || 0) * (swapDirection === "u-to-usdc" ? 0.1 : 10), 2)}</strong><strong>{swapDirection === "u-to-usdc" ? "Demo USDC" : "uCURR"}</strong></div><small>1 uCURR = 0.10 demo USDC</small></div><button className="primary-button full" onClick={doSwap}>Confirm demo swap <span>↗</span></button></section><div className="aside-stack"><div className="panel muted-panel"><div className="eyebrow">YOUR DEMO BALANCES</div><div className="balance-line"><span>uCURR</span><strong>{format(state.balances.uCURR, 2)}</strong></div><div className="balance-line"><span>Demo USDC</span><strong>{format(state.balances.USDC, 2)}</strong></div></div><div className="info-strip compact"><span>ⓘ</span><div><strong>Local simulation</strong><p>Rates and balances are illustrative. tCURR tokenized shares are excluded from swaps.</p></div></div></div></div></>}
         {tab === "buy" && <><SectionHead eyebrow="PAYMENT SANDBOX" title="Buy uCURR" body="Try a purchase flow with a simulated order. No payment provider or card network is connected." right={<StatusBadge tone="amber">No real charges</StatusBadge>} /><div className="transaction-layout"><section className="panel transaction-card"><div className="transaction-top"><strong>Sandbox purchase</strong><span>USD → uCURR</span></div><label className="field-label">Amount in USD<input type="number" min="1" max="10000" step="0.01" value={buyUsd} onChange={(event) => setBuyUsd(event.target.value)} /></label><div className="quote-card"><div><span>Demo rate</span><strong>$1 = 10 uCURR</strong></div><div><span>You receive</span><strong>{format((Number(buyUsd) || 0) * 10, 2)} uCURR</strong></div><div><span>Charge today</span><strong>$0.00</strong></div></div><button className="primary-button full" onClick={doBuy}>Create sandbox order <span>↗</span></button><p className="fine-print">Never enter card details. This flow cannot take payment.</p></section><section className="panel"><div className="panel-heading"><div><div className="eyebrow">ORDER HISTORY</div><h3>Sandbox orders</h3></div><span className="heading-mark">▣</span></div>{state.orders.length ? <div className="activity-list">{state.orders.map((order) => <div className="activity-row" key={order.id}><span className="activity-icon">↗</span><div><strong>{order.id}</strong><small>${format(order.usd, 2)} simulated → {format(order.amount)} uCURR</small></div><time>{new Date(order.at).toLocaleDateString()}</time></div>)}</div> : <EmptyState title="No orders yet" body="Create a sandbox order to see it here." />}</section></div></>}

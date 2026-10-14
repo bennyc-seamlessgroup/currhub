@@ -8,10 +8,10 @@
 
 | 功能 | MVP 實作 | 資料來源 / 限制 |
 |---|---|---|
-| User Dashboard | 概覽、持倉與最近活動 | 瀏覽器本機 demo ledger |
+| User Dashboard | 概覽、已連接錢包的真實 tCURR 餘額與最近示範活動 | tCURR 讀取 Sepolia 合約；其他數字仍為本機 demo ledger |
 | Ethereum Wallet | 透過注入式 EVM wallet 連接並切換 Sepolia，讀取 Sepolia ETH | Wallet provider；不簽交易 |
 | Solana Wallet | 透過注入式 Solana wallet 連接，向 Devnet RPC 讀取 SOL | 只查 Devnet；不能更改 wallet 自身網絡設定 |
-| uCURR / tCURR | Portal 內的示範餘額與持倉；另附可編譯的 Sepolia ERC-20 測試合約 | 合約尚未部署；UI 未連接合約 |
+| uCURR / tCURR | 讀取已連接 Ethereum wallet 的 Sepolia tCURR ERC-20 餘額；另有示範 uCURR 帳本及可編譯的測試合約 | 須提供現有 Sepolia tCURR 合約地址；本 repo 沒有部署合約或鑄造 token |
 | Admin Dashboard | 輸入／更新示範 tCURR 持倉、資格、uCURR pool、建立 snapshot | 本機模擬；沒有真正管理員認證 |
 | Airdrop | 按 eligible tCURR 比例計算、固定 snapshot、每地址一次的 demo claim | claim 只更新本機 demo ledger；正式規則待主管決定 |
 | Registration / KYC | 本機註冊資料及自我聲明式 demo KYC | 不驗證身分；不收集身份文件 |
@@ -28,11 +28,11 @@ cp .env.example .env.local
 npm run dev
 ```
 
-開啟 `http://localhost:3000`。`NEXT_PUBLIC_SOLANA_DEVNET_RPC` 預設為 Solana 公共 Devnet RPC。只把**公開** RPC URL 放在 `NEXT_PUBLIC_` 變數，不要把私鑰、API secret 或 admin credential 放進前端環境變數。
+開啟 `http://localhost:3000`。`NEXT_PUBLIC_SOLANA_DEVNET_RPC` 預設為 Solana 公共 Devnet RPC。若已知 Sepolia tCURR 合約地址，可設定 `NEXT_PUBLIC_TCURR_SEPOLIA_ADDRESS`；也可在 **My wallets** 頁面輸入合約地址，僅儲存在該瀏覽器。只把**公開** RPC URL 和合約地址放在 `NEXT_PUBLIC_` 變數，不要把私鑰、API secret 或 admin credential 放進前端環境變數。
 
 ### 操作流程
 
-1. 在 **My wallets** 連接 Sepolia EVM wallet 或 Solana wallet。連接時只讀測試網原生幣餘額。
+1. 在 **My wallets** 連接 Sepolia EVM wallet，輸入現有 Sepolia tCURR 合約地址，Portal 會讀取該錢包的真實 ERC-20 `balanceOf`。可按 **Add token to wallet** 讓 MetaMask 顯示此 token；匯入 token 不會增加餘額。Solana wallet 仍可連接並讀取 Devnet SOL。
 2. 在 **Account & KYC** 用測試資料建立 demo account，填地區並標記 demo KYC approved。這不是正式 KYC。
 3. 在 **Admin simulator** 將已連接 wallet 地址加入示範 tCURR 持倉，設為 eligible，設定 pool，再建立 demo snapshot。
 4. 在 **Airdrop** 查看固定於該 snapshot 的 allocation 並記錄 demo claim。更改持倉不會改動既有 snapshot；建立新 snapshot 才會重算，並清空該 snapshot 的 claim 紀錄。
@@ -48,7 +48,7 @@ npm run dev
 npm run contracts:compile
 ```
 
-編譯命令只在記憶體中檢查合約；不會部署、鑄造或寫入區塊鏈。正式部署前須先有安全審計、角色／金鑰管理、發行條款、合規與主管批准。Solana SPL mint、跨鏈橋及 UI 合約讀寫均未實作。
+編譯命令只在記憶體中檢查合約；不會部署、鑄造或寫入區塊鏈。若錢包目前沒有 tCURR，須由現有合約的有權地址鑄造或轉入；Portal 不會自行發行 token。正式部署前須先有安全審計、角色／金鑰管理、發行條款、合規與主管批准。Solana SPL mint 及跨鏈橋未實作。
 
 ## 驗證
 
@@ -59,7 +59,7 @@ npm run contracts:compile
 npm run build
 ```
 
-`tests/airdrop.test.mjs` 覆蓋比例分配、pool rounding、資格排除、重複地址與 claim 查找。實際 wallet 擴充套件、Devnet RPC 及付款 provider 沒有自動化整合測試；需要測試 wallet 與受控環境手動驗證。
+`tests/airdrop.test.mjs` 覆蓋比例分配、pool rounding、資格排除、重複地址與 claim 查找。實際 tCURR 餘額讀取需要已部署的 Sepolia 合約及測試 wallet；在合約地址提供前，無法完成鏈上實測。實際 wallet 擴充套件、Devnet RPC 及付款 provider 沒有自動化整合測試。
 
 ## 品牌與部署
 
