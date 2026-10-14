@@ -7,7 +7,7 @@ A simple, wallet-first Web3 portal for test networks. The homepage has four tabs
 - Users choose MetaMask, Phantom, or another detected browser wallet from a popup. The wallet itself asks for connection approval. The website does not ask users to type their wallet address.
 - An Ethereum wallet connects on **Sepolia** and shows its live Sepolia ETH balance. The site reads the connected wallet's live `balanceOf` for the fixed tCURR and uCURR contracts and can suggest adding them to the wallet display.
 - A Solana wallet connects and shows its **Devnet** SOL balance via the configured public RPC. The site reads Devnet data; it does not change the Solana wallet's selected network.
-- Swap and Buy show sample quotes only. Airdrop shows the live tCURR holding when available. Pressing an action button opens an identity verification notice. No identity verification provider is connected, so no trade, purchase, or claim can be submitted.
+- Swap previews either uCURR → USDC or USDC → uCURR at a clearly illustrative rate. Buy shows a sample amount only. Neither makes a transaction or opens an identity check. Airdrop shows the live tCURR holding when available; checking its status opens the identity verification notice. No identity verification provider is connected, so no claim can be submitted.
 - The Buy tab never asks for a card number and never charges a card.
 
 The previous local demo account, self-approved KYC, sample shareholder balances, admin simulator, local swaps, sandbox orders, and demo claims were removed from the user interface. Their old browser data is not used by the new page.
@@ -24,7 +24,7 @@ npm run dev
 
 Open `http://localhost:3000` in a browser where the wallet extension is installed. A MetaMask or Phantom browser popup should appear after you choose that wallet and approve connection. On mobile, use the wallet's supported in-app browser.
 
-The token **contract** addresses are different from a user's **wallet** address. The deployed Sepolia addresses are fixed in `lib/tcurr.ts`; visitors cannot edit them in the site. The top-right wallet button contains **Switch wallet** and **Disconnect**. Disconnect clears the site's current wallet view; it does not revoke the wallet extension's site permission.
+The token **contract** addresses are different from a user's **wallet** address. The deployed Sepolia addresses are fixed in `lib/tcurr.ts`; visitors cannot edit them in the site. The **New to test tokens?** setup link appears only after an owner wallet connects and the site checks the contracts' live owner addresses. The top-right wallet button contains **Switch wallet** and **Disconnect**. Disconnect clears the site's current wallet view; it does not revoke the wallet extension's site permission.
 
 Only use public RPC URLs and contract addresses in `NEXT_PUBLIC_` variables. Never put private keys, recovery phrases, API secrets, or admin credentials in frontend environment variables.
 
@@ -68,6 +68,10 @@ npm run build
 
 The automated tests cover the standalone airdrop calculation library retained for possible future rules. The live wallet popup and on-chain balance require a browser extension and deployed test token to check end to end. No real KYC, swap provider, payment provider, or claim contract is connected.
 
+## Future live swaps
+
+The current swap rate is illustrative. A real Sepolia swap needs a known test USDC contract, a uCURR/USDC liquidity pool with both tokens supplied, live quotes, spending approval for the input token, slippage controls, and a wallet-confirmed swap transaction. Uniswap is one possible protocol; its contracts are deployed on Sepolia. The portal does not yet connect to a pool or submit swap transactions.
+
 ## Release boundaries
 
-This is a testnet prototype. The site is marked `noindex` and has basic response security headers. Public release of wallet-gated actions needs an identity verification provider, server-side authorization, audited contracts, payment and swap integrations, and approved airdrop rules. The final airdrop method and snapshot policy await management approval.
+This is a testnet prototype. The site is marked `noindex` and has basic response security headers. Live swaps and payments need their respective integrations and review. Airdrop claims need approved rules, a snapshot policy, and the planned identity verification flow. The final airdrop method and snapshot policy await management approval.

@@ -88,6 +88,7 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .amount-box strong{background:#fff;border:1px solid #e4eaf3;border-radius:9px;padding:9px 11px;font-size:14px;white-space:nowrap}
 .amount-box b{font-size:36px;letter-spacing:-.05em}
 .swap-arrow{height:43px;width:43px;border-radius:12px;border:4px solid #fff;background:#e9efff;color:#5470d6;display:grid;place-items:center;font-size:23px;font-weight:900;margin:-10px auto;position:relative;z-index:1}
+.swap-arrow:hover{background:#dce5ff}
 .result-box{margin-bottom:23px}
 .full-button{width:100%;justify-content:space-between;padding-left:20px;padding-right:20px}
 .transaction-note{color:#8b97aa;font-size:12px;line-height:1.5;text-align:center;margin:14px 0 0}

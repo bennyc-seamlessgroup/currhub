@@ -11,6 +11,7 @@ const ERC20_READ_ABI = [
   "function decimals() view returns (uint8)",
   "function balanceOf(address) view returns (uint256)",
 ];
+const OWNABLE_READ_ABI = ["function owner() view returns (address)"];
 
 export const SEPOLIA_ID = 11155111n;
 export const TCURR_SEPOLIA_ADDRESS = "0x8a362AC747eB9751e18f7a7D94da2130A7772E2c";
@@ -73,6 +74,12 @@ export async function readTokenBalance(
 
 export function readTCurrBalance(injected: InjectedEthereum, contractAddress: string, walletAddress: string): Promise<TCurrBalance> {
   return readTokenBalance(injected, contractAddress, walletAddress, "tCURR");
+}
+
+export async function readTokenOwner(injected: InjectedEthereum, contractAddress: string): Promise<string> {
+  const provider = await sepoliaProvider(injected);
+  const contract = new Contract(getAddress(contractAddress), OWNABLE_READ_ABI, provider);
+  return getAddress(await contract.owner() as string);
 }
 
 export async function suggestTokenInWallet(

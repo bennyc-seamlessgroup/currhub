@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { brand } from "@/lib/brand";
-import { readTCurrBalance, readTokenBalance, suggestTokenInWallet, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
+import { readTCurrBalance, readTokenBalance, readTokenOwner, suggestTokenInWallet, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
 import WalletPicker, { type WalletChoice } from "@/components/WalletPicker";
 
 type Tab = "balance" | "swap" | "buy" | "airdrop";
@@ -71,7 +71,8 @@ export default function Portal() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
-  const [kycAction, setKycAction] = useState<"swap" | "buy" | "airdrop" | null>(null);
+  const [kycAction, setKycAction] = useState<"airdrop" | null>(null);
+  const [tokenOwnerWallet, setTokenOwnerWallet] = useState("");
   const tcurrAddress = TCURR_SEPOLIA_ADDRESS;
   const [tcurrBalance, setTcurrBalance] = useState<TCurrBalance | null>(null);
   const [tcurrLoading, setTcurrLoading] = useState(false);
@@ -83,6 +84,7 @@ export default function Portal() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [swapAmount, setSwapAmount] = useState("100");
+  const [swapDirection, setSwapDirection] = useState<"ucurr-to-usdc" | "usdc-to-ucurr">("ucurr-to-usdc");
   const [buyAmount, setBuyAmount] = useState("50");
 
   useEffect(() => {
@@ -174,6 +176,20 @@ export default function Portal() {
       .finally(() => { if (active) setUcurrLoading(false); });
     return () => { active = false; };
   }, [selectedEvm, wallets.ethereum?.address, ucurrAddress]);
+
+  useEffect(() => {
+    if (!selectedEvm || !wallets.ethereum) { setTokenOwnerWallet(""); return; }
+    let active = true;
+    const address = wallets.ethereum.address.toLowerCase();
+    setTokenOwnerWallet("");
+    Promise.all([
+      readTokenOwner(selectedEvm.provider, tcurrAddress),
+      readTokenOwner(selectedEvm.provider, ucurrAddress),
+    ]).then((owners) => {
+      if (active) setTokenOwnerWallet(owners.some((owner) => owner.toLowerCase() === address) ? address : "");
+    }).catch(() => { if (active) setTokenOwnerWallet(""); });
+    return () => { active = false; };
+  }, [selectedEvm, wallets.ethereum?.address, tcurrAddress, ucurrAddress]);
 
   function refreshWalletOptions() {
     window.dispatchEvent(new Event("eip6963:requestProvider"));
@@ -272,9 +288,14 @@ export default function Portal() {
     } catch (error) { setNotice(walletImportError(error)); }
   }
 
-  function requestAction(action: "swap" | "buy" | "airdrop") {
+  function requestAirdrop() {
     if (!wallets.ethereum && !wallets.solana) { setPickerOpen(true); return; }
-    setKycAction(action);
+    setKycAction("airdrop");
+  }
+
+  function reverseSwap() {
+    setSwapAmount(String(swapOutput));
+    setSwapDirection((current) => current === "ucurr-to-usdc" ? "usdc-to-ucurr" : "ucurr-to-usdc");
   }
 
   function disconnectWallet() {
@@ -298,9 +319,14 @@ export default function Portal() {
   }, [evmOptions, solanaOptions]);
 
   const connected = Boolean(wallets.ethereum || wallets.solana);
+  const isTokenOwner = Boolean(wallets.ethereum && tokenOwnerWallet === wallets.ethereum.address.toLowerCase());
   const balanceLabel = !wallets.ethereum ? "—" : tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : tcurrBalance ? tcurrBalance.display : "—";
   const utilityBalanceLabel = !wallets.ethereum ? "—" : ucurrLoading ? "Reading…" : ucurrError ? "Unavailable" : ucurrBalance ? ucurrBalance.display : "—";
   const ethereumOnlyNote = "Available on Ethereum Sepolia. Switch to an Ethereum wallet to view this token.";
+  const swapFromUCurr = swapDirection === "ucurr-to-usdc";
+  const swapInputSymbol = swapFromUCurr ? "uCURR" : "USDC";
+  const swapOutputSymbol = swapFromUCurr ? "USDC" : "uCURR";
+  const swapOutput = Math.max(0, Number(swapAmount) || 0) * (swapFromUCurr ? 0.1 : 10);
 
   return <div className="app-shell">
     <header className="site-header"><div className="header-inner">
@@ -321,16 +347,16 @@ export default function Portal() {
           <section className="balance-card token-card featured"><div className="card-kicker"><span className="token-emblem">t</span> tCURR <span className="card-network">SEPOLIA</span></div><div className={wallets.ethereum && tcurrBalance ? "large-balance" : "large-balance empty-balance"}>{balanceLabel}</div><div className="balance-caption">{wallets.solana ? ethereumOnlyNote : tcurrBalance ? "Your tCURR test token balance" : tcurrError || "Tokenized shares test token"}</div>{wallets.ethereum && tcurrBalance && <button className="import-button" onClick={addTokenToWallet}>Not showing in your wallet? Add tCURR <span aria-hidden="true">↗</span></button>}</section>
           <section className="balance-card token-card utility-card"><div className="card-kicker"><span className="coin-symbol utility-symbol">u</span> uCURR <span className="card-network">SEPOLIA</span></div><div className={wallets.ethereum && ucurrBalance ? "large-balance" : "large-balance empty-balance"}>{utilityBalanceLabel}</div><div className="balance-caption">{wallets.solana ? ethereumOnlyNote : ucurrError || (ucurrBalance ? "Your uCURR test token balance" : "Utility token for future rewards")}</div>{wallets.ethereum && ucurrBalance && <button className="import-button" onClick={addUcurrToWallet}>Not showing in your wallet? Add uCURR <span aria-hidden="true">↗</span></button>}</section>
         </div>
-        <a className="token-guide-link" href="/setup">New to test tokens? Follow the Sepolia ETH and token setup guide <span aria-hidden="true">→</span></a>
+        {isTokenOwner && <a className="token-guide-link" href="/setup">New to test tokens? Follow the Sepolia ETH and token setup guide <span aria-hidden="true">→</span></a>}
       </>}
 
-      {tab === "swap" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Swap preview</h2><span className="preview-pill">PREVIEW ONLY</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={swapAmount} onChange={(event) => setSwapAmount(event.target.value)} aria-label="Amount of uCURR to swap" /><strong>uCURR</strong></div></label><div className="swap-arrow" aria-hidden="true">↓</div><div className="amount-box result-box"><span>You receive (estimated)</span><div><b>{displayAmount(Math.max(0, Number(swapAmount) || 0) / 10, 2)}</b><strong>USDC</strong></div></div><button className="primary-button full-button" onClick={() => requestAction("swap")}>{connected ? "Continue to swap" : "Connect wallet"}<ArrowIcon /></button><p className="transaction-note">Illustrative rate only. No swap or token transfer is available yet.</p></section><aside className="feature-aside"><div className="aside-icon">⇄</div><h3>Before you swap</h3><p>Identity verification will be required when swaps become available. Your tCURR shares are not used in this swap.</p></aside></div>}
+      {tab === "swap" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Swap preview</h2><span className="preview-pill">PREVIEW ONLY</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={swapAmount} onChange={(event) => setSwapAmount(event.target.value)} aria-label={`Amount of ${swapInputSymbol} to swap`} /><strong>{swapInputSymbol}</strong></div></label><button className="swap-arrow" type="button" onClick={reverseSwap} aria-label="Reverse swap direction" title="Reverse swap direction">⇅</button><div className="amount-box result-box"><span>You receive (illustrative)</span><div><b>{displayAmount(swapOutput, 4)}</b><strong>{swapOutputSymbol}</strong></div></div><p className="transaction-note">Example rate: 10 uCURR = 1 USDC. This is not a live quote. No swap or token transfer occurs.</p></section><aside className="feature-aside"><div className="aside-icon">⇄</div><h3>Choose either direction</h3><p>Use the arrow to preview uCURR to USDC or USDC to uCURR. Live trading will need a funded liquidity pool and a wallet transaction.</p></aside></div>}
 
-      {tab === "buy" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Purchase preview</h2><span className="preview-pill">SANDBOX</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={buyAmount} onChange={(event) => setBuyAmount(event.target.value)} aria-label="Purchase amount in US dollars" /><strong>USD</strong></div></label><div className="quote-line"><span>Illustrative uCURR amount</span><strong>{displayAmount(Math.max(0, Number(buyAmount) || 0) * 10, 2)} uCURR</strong></div><div className="quote-line"><span>Charged today</span><strong>$0.00</strong></div><button className="primary-button full-button" onClick={() => requestAction("buy")}>{connected ? "Continue to buy" : "Connect wallet"}<ArrowIcon /></button><p className="transaction-note">No card details are collected. No charge or token delivery occurs.</p></section><aside className="feature-aside"><div className="aside-icon">◈</div><h3>A safe first look</h3><p>Buying will require identity verification and a payment provider. For now, this page only shows an example quote.</p></aside></div>}
+      {tab === "buy" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Purchase preview</h2><span className="preview-pill">SANDBOX</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={buyAmount} onChange={(event) => setBuyAmount(event.target.value)} aria-label="Purchase amount in US dollars" /><strong>USD</strong></div></label><div className="quote-line"><span>Illustrative uCURR amount</span><strong>{displayAmount(Math.max(0, Number(buyAmount) || 0) * 10, 2)} uCURR</strong></div><div className="quote-line"><span>Charged today</span><strong>$0.00</strong></div><p className="transaction-note">Preview only. No card details are collected, and no charge or token delivery occurs.</p></section><aside className="feature-aside"><div className="aside-icon">◈</div><h3>A safe first look</h3><p>Card checkout is not connected yet. This page only shows an example amount.</p></aside></div>}
 
-      {tab === "airdrop" && <div className="feature-layout"><section className="feature-card airdrop-card"><span className="preview-pill">NOT OPEN YET</span><h2>Your tCURR matters here</h2><p>When the airdrop rules are approved, this page will show eligibility for your connected wallet.</p><div className="airdrop-holding"><span>Your tCURR on Sepolia</span><strong>{tcurrBalance ? `${tcurrBalance.display} tCURR` : wallets.ethereum ? tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : "—" : "Connect wallet"}</strong></div><button className="primary-button full-button" onClick={() => requestAction("airdrop")}>{connected ? "Check airdrop status" : "Connect wallet"}<ArrowIcon /></button><p className="transaction-note">No allocation or claim is available yet.</p></section><aside className="feature-aside"><div className="aside-icon">✦</div><h3>What happens next?</h3><p>Eligibility rules, the snapshot, and the claim process are awaiting approval. Identity verification will be required to claim.</p></aside></div>}
+      {tab === "airdrop" && <div className="feature-layout"><section className="feature-card airdrop-card"><span className="preview-pill">NOT OPEN YET</span><h2>Your tCURR matters here</h2><p>When the airdrop rules are approved, this page will show eligibility for your connected wallet.</p><div className="airdrop-holding"><span>Your tCURR on Sepolia</span><strong>{tcurrBalance ? `${tcurrBalance.display} tCURR` : wallets.ethereum ? tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : "—" : "Connect wallet"}</strong></div><button className="primary-button full-button" onClick={requestAirdrop}>{connected ? "Check airdrop status" : "Connect wallet"}<ArrowIcon /></button><p className="transaction-note">No allocation or claim is available yet.</p></section><aside className="feature-aside"><div className="aside-icon">✦</div><h3>What happens next?</h3><p>Eligibility rules, the snapshot, and the claim process are awaiting approval. Identity verification will be required to claim.</p></aside></div>}
     </main>
     <WalletPicker open={pickerOpen} choices={walletChoices} onClose={() => setPickerOpen(false)} onRefresh={refreshWalletOptions} />
-    {kycAction && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setKycAction(null); }}><div className="status-modal" role="dialog" aria-modal="true" aria-labelledby="kyc-modal-title"><button className="icon-button modal-close" onClick={() => setKycAction(null)} aria-label="Close">×</button><span className="status-modal-icon">◎</span><h2 id="kyc-modal-title">Identity check required</h2><p>{kycAction === "airdrop" ? "Airdrop claims" : kycAction === "buy" ? "Purchases" : "Swaps"} will require identity verification. Verification is not available in this test version, so no action was submitted.</p><button className="primary-button full-button" onClick={() => setKycAction(null)}>Got it</button></div></div>}
+    {kycAction && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setKycAction(null); }}><div className="status-modal" role="dialog" aria-modal="true" aria-labelledby="kyc-modal-title"><button className="icon-button modal-close" onClick={() => setKycAction(null)} aria-label="Close">×</button><span className="status-modal-icon">◎</span><h2 id="kyc-modal-title">Identity check required</h2><p>Airdrop claims will require identity verification. Verification is not available in this test version, so no action was submitted.</p><button className="primary-button full-button" onClick={() => setKycAction(null)}>Got it</button></div></div>}
   </div>;
 }
