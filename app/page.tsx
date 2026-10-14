@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatUnits } from "ethers";
 import { brand } from "@/lib/brand";
 import { readTCurrBalance, readTokenBalance, readTokenOwner, suggestTokenInWallet, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
 import WalletPicker, { type WalletChoice } from "@/components/WalletPicker";
@@ -48,6 +49,12 @@ function shortAddress(value: string) {
 }
 function displayAmount(value: number, digits = 5) {
   return value.toLocaleString("en-US", { maximumFractionDigits: digits });
+}
+function displayTokenBalance(token: TokenBalance) {
+  const [whole, fraction = ""] = formatUnits(token.balance, token.decimals).split(".");
+  const threeDecimals = fraction.slice(0, 3).replace(/0+$/, "");
+  if (token.balance > 0n && whole === "0" && !threeDecimals && fraction) return "<0.001";
+  return `${BigInt(whole).toLocaleString("en-US")}${threeDecimals ? `.${threeDecimals}` : ""}`;
 }
 function walletImportError(error: unknown): string {
   if (error && typeof error === "object") {
@@ -383,8 +390,8 @@ export default function Portal() {
 
   const connected = Boolean(wallets.ethereum || wallets.solana);
   const isTokenOwner = Boolean(wallets.ethereum && tokenOwnerWallet === wallets.ethereum.address.toLowerCase());
-  const balanceLabel = !wallets.ethereum ? "—" : tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : tcurrBalance ? tcurrBalance.display : "—";
-  const utilityBalanceLabel = !wallets.ethereum ? "—" : ucurrLoading ? "Reading…" : ucurrError ? "Unavailable" : ucurrBalance ? ucurrBalance.display : "—";
+  const balanceLabel = !wallets.ethereum ? "—" : tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : tcurrBalance ? displayTokenBalance(tcurrBalance) : "—";
+  const utilityBalanceLabel = !wallets.ethereum ? "—" : ucurrLoading ? "Reading…" : ucurrError ? "Unavailable" : ucurrBalance ? displayTokenBalance(ucurrBalance) : "—";
   const ethereumOnlyNote = "Available on Ethereum Sepolia. Switch to an Ethereum wallet to view this token.";
 
   return <div className="app-shell">
