@@ -13,6 +13,8 @@ const ERC20_READ_ABI = [
 ];
 
 export const SEPOLIA_ID = 11155111n;
+export const TCURR_SEPOLIA_ADDRESS = "0x8a362AC747eB9751e18f7a7D94da2130A7772E2c";
+export const UCURR_SEPOLIA_ADDRESS = "0xB7E470175c2f271394c5e5F7348d46A1F5EfCbc1";
 
 export type InjectedEthereum = {
   request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>;
