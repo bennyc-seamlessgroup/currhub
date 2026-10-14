@@ -6,7 +6,7 @@ A simple, wallet-first Web3 portal for test networks. The homepage has four tabs
 
 - Users choose MetaMask, Phantom, or another detected browser wallet from a popup. The wallet itself asks for connection approval. The website does not ask users to type their wallet address.
 - An Ethereum wallet connects on **Sepolia** and shows its live Sepolia ETH balance. The site reads the connected wallet's live `balanceOf` for the fixed tCURR and uCURR contracts and can suggest adding them to the wallet display.
-- A Solana wallet connects and shows its **Devnet** SOL balance via the configured public RPC. The site reads Devnet data; it does not change the Solana wallet's selected network.
+- A Solana wallet connects and shows its **Devnet** SOL balance via the configured public RPC. The setup page also reads Circle Devnet test USDC for a connected Phantom wallet. The site reads Devnet data; it does not change the Solana wallet's selected network.
 - Swap reads live Sepolia uCURR ↔ test USDC quotes from the [Uniswap v2 Sepolia router](https://developers.uniswap.org/docs/protocols/v2/deployments). It asks the connected wallet to approve exactly the input amount, then to confirm a real testnet swap. Swaps are available after the uCURR/USDC pool has liquidity. Buy shows a sample amount only and makes no transaction. Neither Swap nor Buy opens an identity check. Airdrop shows the live tCURR holding when available; checking its status opens the identity verification notice. No identity verification provider is connected, so no claim can be submitted.
 - The Buy tab never asks for a card number and never charges a card.
 
@@ -24,7 +24,7 @@ npm run dev
 
 Open `http://localhost:3000` in a browser where the wallet extension is installed. A MetaMask or Phantom browser popup should appear after you choose that wallet and approve connection. On mobile, use the wallet's supported in-app browser.
 
-The token **contract** addresses are different from a user's **wallet** address. The deployed Sepolia addresses are fixed in `lib/tcurr.ts`; visitors cannot edit them in the site. The **New to test tokens?** setup link appears only after an owner wallet connects and the site checks the contracts' live owner addresses. The top-right wallet button contains **Switch wallet** and **Disconnect**. Disconnect clears the site's current wallet view; it does not revoke the wallet extension's site permission.
+The token **contract** addresses are different from a user's **wallet** address. The deployed Sepolia addresses are fixed in `lib/tcurr.ts`; visitors cannot edit them in the site. The **New to test tokens?** Ethereum setup link appears only after an owner wallet connects and the site checks the contracts' live owner addresses. A connected Solana wallet gets a link to the Solana guide. The setup page has separate **Ethereum Sepolia** and **Solana Devnet** tabs. The top-right wallet button contains **Switch wallet** and **Disconnect**. Disconnect clears the site's current wallet view; it does not revoke the wallet extension's site permission.
 
 Only use public RPC URLs and contract addresses in `NEXT_PUBLIC_` variables. Never put private keys, recovery phrases, API secrets, or admin credentials in frontend environment variables.
 
@@ -45,10 +45,20 @@ These contracts have owner-only minting. The tCURR test token does not itself es
 1. Open [`/setup`](http://localhost:3000/setup) in the same browser as MetaMask. Connect MetaMask on Sepolia. The page shows your public wallet address and Sepolia ETH balance.
 2. If you need Sepolia ETH for network fees, copy the public address and open the [Sepolia PoW faucet](https://sepolia-faucet.pk910.de/). Paste the address, run its browser mining task, stop it, then claim test ETH. Mainnet ETH is not required. Receiving tokens does not require ETH.
 3. In the second section of `/setup`, the contract owner can choose an amount and click **Mint … to my wallet**. Approve each transaction in MetaMask. tCURR uses whole units; uCURR can use decimals. Other wallets cannot mint these contracts.
-4. To start swaps, the uCURR owner enters the amounts to place in the **Start real Sepolia swaps** section. With 50 uCURR and 20 test USDC, the suggested starting amounts are 40 uCURR and 4 test USDC. This starts the pool at 10 uCURR per test USDC and leaves both tokens in the wallet for testing. The owner confirms three separate Sepolia transactions in MetaMask: authorize uCURR, authorize test USDC, then create the pool and deposit. The page reads back the live pool status after confirmation. It also lets the owner approve and withdraw their pool position later.
-5. Open **Swap** on the main page, enter an amount, and review the live quote and minimum received. Confirm an exact spending approval if asked, then confirm the swap in MetaMask. The swap has 1% slippage tolerance and a 20-minute deadline. Small pools can have large price changes, so try small amounts first.
-6. To send tCURR to another test wallet, enter that wallet's public address in the setup page and click **Allow tCURR**. The owner approves this Sepolia transaction, then sends tCURR from MetaMask. uCURR can be sent normally. tCURR transfers require both sender and recipient to be allowlisted.
-7. The recipient connects their wallet on the main page to see live balances. **Not showing in your wallet?** asks MetaMask to display a token; this does not mint it.
+4. In the third section, open [Circle's testnet faucet](https://faucet.circle.com/), choose **USDC** and **Ethereum Sepolia**, paste your public MetaMask address, and send test USDC. The setup page can refresh its live USDC balance and ask MetaMask to display the token. Circle's Sepolia test USDC contract is `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`.
+5. To start swaps in a new pool, the uCURR owner enters the amounts to place in **Start real Sepolia swaps**. The suggested starting amounts are 40 uCURR and 4 test USDC. The owner confirms three separate Sepolia transactions in MetaMask: authorize uCURR, authorize test USDC, then create the pool and deposit. The page reads back the live pool status after confirmation. It also lets the owner approve and withdraw their pool position later.
+6. Open **Swap** on the main page, enter an amount, and review the live quote and minimum received. Confirm an exact spending approval if asked, then confirm the swap in MetaMask. The swap has 1% slippage tolerance and a 20-minute deadline. Small pools can have large price changes, so try small amounts first.
+7. To send tCURR to another test wallet, enter that wallet's public address in the setup page and click **Allow tCURR**. The owner approves this Sepolia transaction, then sends tCURR from MetaMask. uCURR can be sent normally. tCURR transfers require both sender and recipient to be allowlisted.
+8. The recipient connects their wallet on the main page to see live balances. **Not showing in your wallet?** asks MetaMask to display a token; this does not mint it.
+
+### Prepare Solana Devnet with Phantom
+
+The **Solana Devnet** tab gives an honest setup path for the second chain:
+
+1. In Phantom, enable Testnet Mode and select **Solana Devnet** using [Phantom's instructions](https://help.phantom.com/articles/use-testnets-in-phantom-5997313271699). Connect Phantom in the setup page, copy its public Solana address, and request [Devnet SOL](https://faucet.solana.com/) for test fees. The page reads the connected address's Devnet SOL balance.
+2. Solana tCURR and uCURR need separate SPL token mints. The [Solana token quickstart](https://solana.com/docs/tokens/quickstart) explains mints, token accounts, and minting; its Playground wallet is separate from Phantom by default. No CURR Solana mints have been deployed or linked to the portal. Matching Ethereum's restricted tCURR transfers requires additional Solana logic.
+3. At [Circle's testnet faucet](https://faucet.circle.com/), choose **USDC** and **Solana Devnet** and paste your public Solana address. The page reads this wallet's live test USDC for Circle's Devnet mint `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`.
+4. Solana uCURR/USDC swaps need the Solana uCURR mint, a Devnet liquidity pool, and a wallet confirmed swap integration. Those transactions are not available in CURR Hub yet. Ethereum and Solana test tokens are separate; they do not appear on the other chain automatically.
 
 The setup page never deploys new token contracts or transfers tokens without wallet confirmation. Creating a liquidity pool deposits the amounts the owner chooses into the Uniswap v2 pair and gives that wallet a pool position. Minting, allowlisting, and pool funding require the contract owner's connected MetaMask wallet and that user's approval. Other visitors can connect a wallet and see tokens sent to them.
 
@@ -73,7 +83,7 @@ The automated tests cover the standalone airdrop calculation library retained fo
 
 ## Swap contracts and status
 
-The site uses the [official Uniswap v2 Sepolia factory and Router02](https://developers.uniswap.org/docs/protocols/v2/deployments) and [Circle's Sepolia test USDC](https://developers.circle.com/stablecoins/usdc-contract-addresses). Factory: `0xF62c03E08ada871A0bEb309762E260a7a6a880E6`; router: `0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3`. These addresses are fixed in `lib/sepolia-swap.ts`. The page queries the factory for the pair and its reserves instead of assuming a pair already exists. An owner still has to approve both token deposits and fund the pool in MetaMask before any visitor can swap. Test USDC has no cash value.
+The site uses the [official Uniswap v2 Sepolia factory and Router02](https://developers.uniswap.org/docs/protocols/v2/deployments) and [Circle's Sepolia test USDC](https://developers.circle.com/stablecoins/usdc-contract-addresses). Factory: `0xF62c03E08ada871A0bEb309762E260a7a6a880E6`; router: `0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3`. These addresses are fixed in `lib/sepolia-swap.ts`. The [uCURR/USDC Sepolia pool](https://sepolia.etherscan.io/address/0x3b9B3Eddcfb179b47BEc17ECCaBe2Ff3f2DCfa26) was funded and live when checked on 14 October 2026. The page reads its current reserves and quotes instead of assuming a fixed price. Test USDC has no cash value.
 
 ## Release boundaries
 

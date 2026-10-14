@@ -136,6 +136,10 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .status-modal p{color:#76859b;line-height:1.6;font-size:14px;margin-bottom:27px}
 .setup-shell .header-inner{justify-content:space-between}
 .setup-container{max-width:1000px}
+.setup-chain-tabs{display:flex;gap:8px;width:max-content;max-width:100%;padding:5px;margin-bottom:30px;background:#e9eef8;border-radius:15px}
+.setup-chain-tab{border:0;border-radius:11px;background:transparent;padding:12px 20px;color:#667791;font-size:14px;font-weight:800;white-space:nowrap}
+.setup-chain-tab:hover{color:#3e5bd3}
+.setup-chain-tab.active{background:#fff;color:#3e5bd3;box-shadow:0 3px 12px #23345614}
 .setup-intro,.setup-token-card,.setup-done{border:1px solid #e4eaf3;border-radius:20px;background:#fff;box-shadow:0 7px 28px #1d32570a}
 .setup-intro{display:flex;align-items:flex-start;gap:18px;padding:25px 28px;margin-bottom:20px}
 .setup-step{width:39px;height:39px;flex:0 0 39px;display:grid;place-items:center;background:#e9eeff;color:#4a65d6;border-radius:12px;font-size:18px;font-weight:900}
@@ -144,6 +148,9 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .setup-wallet{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:14px}
 .setup-wallet strong{color:#344ec0;background:#edf1ff;border-radius:8px;padding:9px 11px}
 .setup-wallet span{color:#687a97}
+.setup-usdc-balance{margin-top:15px}
+.setup-links{display:flex;align-items:center;gap:15px;flex-wrap:wrap;margin-top:13px}
+.setup-pending{background:#f5f7fc;border-left:3px solid #879ce2;border-radius:0 8px 8px 0;padding:10px 13px;color:#647692!important}
 .setup-guide-list{margin:18px 0 10px;padding-left:21px;color:#566984;font-size:14px;line-height:1.7}
 .setup-guide-list li+li{margin-top:6px}
 .setup-stage-head{display:flex;align-items:flex-start;gap:18px;margin-top:31px}
@@ -179,4 +186,4 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 @media(max-width:900px){.header-inner{gap:18px}.top-nav{gap:1px}.tab{padding:12px 10px}.feature-layout{grid-template-columns:minmax(0,1.5fr) minmax(200px,1fr)}}
 @media(max-width:690px){.header-inner{min-height:0;padding:16px 18px 0;flex-wrap:wrap;gap:14px}.brand-button{font-size:18px}.brand-mark{width:33px;height:33px;font-size:20px}.header-wallet-menu{margin-left:auto}.header-wallet-button{padding:8px 11px;font-size:12px;min-height:37px}.top-nav{order:3;width:100%;overflow-x:auto;margin:0 -18px;padding:0 18px 10px}.tab{padding:10px 12px}.main-container{padding:36px 18px 65px}.page-top{align-items:start;flex-direction:column;gap:17px}.page-top p{font-size:14px}.page-top-actions{flex-direction:row;align-items:center;justify-content:space-between;width:100%}.native-balance{min-width:0}.connect-hero{padding:25px;gap:18px;min-height:0}.hero-symbol .brand-mark{width:52px;height:52px;border-radius:17px;font-size:32px}.connect-hero h2{font-size:22px}.connect-hero p{font-size:13px}.balance-grid{grid-template-columns:1fr;gap:13px}.balance-card.token-card{padding:26px;min-height:255px}.large-balance{margin-top:35px}.large-balance.empty-balance{margin-top:40px}.feature-layout{grid-template-columns:1fr;gap:0}.feature-card{padding:22px}.feature-aside{padding:30px 12px}.feature-aside p{max-width:none}.airdrop-holding{align-items:start;flex-direction:column}.airdrop-holding strong{text-align:left}}
 @media(max-width:410px){.connect-hero{display:block}.hero-symbol{margin-bottom:16px}.card-network{font-size:9px}.setting-row{flex-direction:column}.wallet-modal{padding:20px}.wallet-choice{gap:9px}.wallet-logo{width:38px;height:38px;flex-basis:38px}.choice-end{font-size:11px}}
-@media(max-width:690px){.setup-grid,.pool-deposit-grid{grid-template-columns:1fr}.setup-token-card{min-height:0}.setup-intro{padding:22px}.setup-token-card{padding:22px}}
+@media(max-width:690px){.setup-grid,.pool-deposit-grid{grid-template-columns:1fr}.setup-token-card{min-height:0}.setup-intro{padding:22px}.setup-token-card{padding:22px}.setup-chain-tabs{width:100%}.setup-chain-tab{flex:1;padding:11px 8px;font-size:12px}}

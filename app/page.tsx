@@ -338,6 +338,7 @@ export default function Portal() {
           <section className="balance-card token-card utility-card"><div className="card-kicker"><span className="coin-symbol utility-symbol">u</span> uCURR <span className="card-network">SEPOLIA</span></div><div className={wallets.ethereum && ucurrBalance ? "large-balance" : "large-balance empty-balance"}>{utilityBalanceLabel}</div><div className="balance-caption">{wallets.solana ? ethereumOnlyNote : ucurrError || (ucurrBalance ? "Your uCURR test token balance" : "Utility token for future rewards")}</div>{wallets.ethereum && ucurrBalance && <button className="import-button" onClick={addUcurrToWallet}>Not showing in your wallet? Add uCURR <span aria-hidden="true">↗</span></button>}</section>
         </div>
         {isTokenOwner && <a className="token-guide-link" href="/setup">New to test tokens? Follow the Sepolia ETH and token setup guide <span aria-hidden="true">→</span></a>}
+        {wallets.solana && <a className="token-guide-link" href="/setup?chain=solana">Prepare Solana Devnet test tokens <span aria-hidden="true">→</span></a>}
       </>}
 
       {tab === "swap" && <SwapPanel provider={selectedEvm?.provider || null} wallet={wallets.ethereum?.address || ""} connectedToSolana={Boolean(wallets.solana)} onConnect={() => { refreshWalletOptions(); setPickerOpen(true); }} onSuccess={refreshBalance} />}

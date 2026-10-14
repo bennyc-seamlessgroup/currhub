@@ -145,7 +145,7 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   }
 
   return <section className="setup-done pool-setup">
-    <div className="setup-stage-head"><span className="setup-step">3</span><div><h2>Start real Sepolia swaps</h2><p>Add uCURR and test USDC to a Uniswap v2 pool. Each approval and the final deposit need your MetaMask confirmation.</p></div></div>
+    <div className="setup-stage-head"><span className="setup-step">4</span><div><h2>Start real Sepolia swaps</h2><p>Add uCURR and test USDC to a Uniswap v2 pool. Each approval and the final deposit need your MetaMask confirmation.</p></div></div>
     {loading && <p>Checking pool and wallet balances…</p>}
     {data && <>
       <div className="setup-contract"><span>Pool status</span><strong>{live ? "Live" : "Not funded yet"}</strong></div>
