@@ -8,7 +8,9 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
-    "contracts:compile": "node scripts/compile-contracts.mjs"
+    "contracts:compile": "node scripts/compile-contracts.mjs",
+    "contracts:artifacts": "node scripts/compile-contracts.mjs --write-artifacts",
+    "contracts:check-artifacts": "node scripts/compile-contracts.mjs --check-artifacts"
   },
   "dependencies": {
     "ethers": "^6.17.0",

@@ -18,12 +18,13 @@ export type InjectedEthereum = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
 };
 
-export type TCurrBalance = {
+export type TokenBalance = {
   address: string;
   balance: bigint;
   display: string;
   decimals: number;
 };
+export type TCurrBalance = TokenBalance;
 
 export function validEthereumAddress(value: string): boolean {
   return isAddress(value);
@@ -37,17 +38,18 @@ export async function sepoliaProvider(injected: InjectedEthereum): Promise<Brows
   return new BrowserProvider(injected);
 }
 
-export async function readTCurrBalance(
+export async function readTokenBalance(
   injected: InjectedEthereum,
   contractAddress: string,
   walletAddress: string,
-): Promise<TCurrBalance> {
-  if (!isAddress(contractAddress)) throw new Error("Enter a valid tCURR contract address.");
+  expectedSymbol: "tCURR" | "uCURR",
+): Promise<TokenBalance> {
+  if (!isAddress(contractAddress)) throw new Error(`Enter a valid ${expectedSymbol} contract address.`);
   if (!isAddress(walletAddress)) throw new Error("Wallet address is invalid.");
   const provider = await sepoliaProvider(injected);
   const address = getAddress(contractAddress);
   const code = await provider.getCode(address);
-  if (code === "0x") throw new Error("No token contract was found at this address on Sepolia.");
+  if (code === "0x") throw new Error(`No ${expectedSymbol} contract was found at this address on Sepolia.`);
   const contract = new Contract(address, ERC20_READ_ABI, provider);
   const [symbol, decimalsRaw, balance] = await Promise.all([
     contract.symbol() as Promise<string>,
@@ -55,8 +57,8 @@ export async function readTCurrBalance(
     contract.balanceOf(getAddress(walletAddress)) as Promise<bigint>,
   ]);
   const decimals = Number(decimalsRaw);
-  if (symbol !== "tCURR" || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-    throw new Error("This Sepolia contract did not return valid tCURR token metadata.");
+  if (symbol !== expectedSymbol || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    throw new Error(`This Sepolia contract did not return valid ${expectedSymbol} token metadata.`);
   }
   const display = decimals === 0 ? balance.toLocaleString("en-US") : formatUnits(balance, decimals);
   return {
@@ -67,9 +69,14 @@ export async function readTCurrBalance(
   };
 }
 
+export function readTCurrBalance(injected: InjectedEthereum, contractAddress: string, walletAddress: string): Promise<TCurrBalance> {
+  return readTokenBalance(injected, contractAddress, walletAddress, "tCURR");
+}
+
 export async function suggestTokenInWallet(
   injected: InjectedEthereum,
-  token: TCurrBalance,
+  token: TokenBalance,
+  symbol: "tCURR" | "uCURR" = "tCURR",
 ): Promise<void> {
   await sepoliaProvider(injected);
   await injected.request({
@@ -79,7 +86,7 @@ export async function suggestTokenInWallet(
       options: {
         address: token.address,
         chainId: Number(SEPOLIA_ID),
-        symbol: "tCURR",
+        symbol,
         decimals: token.decimals,
       },
     }],

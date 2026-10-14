@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { brand } from "@/lib/brand";
-import { readTCurrBalance, suggestTokenInWallet, validEthereumAddress, type TCurrBalance } from "@/lib/tcurr";
+import { readTCurrBalance, readTokenBalance, suggestTokenInWallet, validEthereumAddress, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
 import WalletPicker, { type WalletChoice } from "@/components/WalletPicker";
 
 type Tab = "balance" | "swap" | "buy" | "airdrop";
@@ -33,6 +33,7 @@ declare global {
 }
 
 const TOKEN_ADDRESS_KEY = "currhub-tcurr-sepolia-contract";
+const UTOKEN_ADDRESS_KEY = "currhub-ucurr-sepolia-contract";
 const SEPOLIA_CHAIN_ID = "0xaa36a7";
 const SOLANA_RPC = process.env.NEXT_PUBLIC_SOLANA_DEVNET_RPC || "https://api.devnet.solana.com";
 const tabs: { id: Tab; label: string }[] = [
@@ -68,6 +69,11 @@ export default function Portal() {
   const [tcurrBalance, setTcurrBalance] = useState<TCurrBalance | null>(null);
   const [tcurrLoading, setTcurrLoading] = useState(false);
   const [tcurrError, setTcurrError] = useState("");
+  const [ucurrAddress, setUcurrAddress] = useState(process.env.NEXT_PUBLIC_UCURR_SEPOLIA_ADDRESS || "");
+  const [ucurrDraft, setUcurrDraft] = useState(process.env.NEXT_PUBLIC_UCURR_SEPOLIA_ADDRESS || "");
+  const [ucurrBalance, setUcurrBalance] = useState<TokenBalance | null>(null);
+  const [ucurrLoading, setUcurrLoading] = useState(false);
+  const [ucurrError, setUcurrError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [swapAmount, setSwapAmount] = useState("100");
@@ -77,6 +83,8 @@ export default function Portal() {
     try {
       const saved = localStorage.getItem(TOKEN_ADDRESS_KEY);
       if (saved && validEthereumAddress(saved)) { setTcurrAddress(saved); setTcurrDraft(saved); }
+      const savedUtility = localStorage.getItem(UTOKEN_ADDRESS_KEY);
+      if (savedUtility && validEthereumAddress(savedUtility)) { setUcurrAddress(savedUtility); setUcurrDraft(savedUtility); }
     } catch { /* Optional browser storage may be unavailable. */ }
   }, []);
 
@@ -107,6 +115,7 @@ export default function Portal() {
       setWallets((current) => ({ ...current, ethereum: undefined }));
       setSelectedEvm(null);
       setTcurrBalance(null);
+      setUcurrBalance(null);
       setNotice("Wallet changed. Connect again to see the right balance.");
     };
     provider.on("accountsChanged", onChange);
@@ -134,6 +143,24 @@ export default function Portal() {
       .finally(() => { if (active) setTcurrLoading(false); });
     return () => { active = false; };
   }, [selectedEvm, wallets.ethereum?.address, tcurrAddress]);
+
+  useEffect(() => {
+    if (!selectedEvm || !wallets.ethereum || !ucurrAddress) {
+      setUcurrBalance(null);
+      setUcurrError("");
+      setUcurrLoading(false);
+      return;
+    }
+    let active = true;
+    setUcurrBalance(null);
+    setUcurrLoading(true);
+    setUcurrError("");
+    readTokenBalance(selectedEvm.provider, ucurrAddress, wallets.ethereum.address, "uCURR")
+      .then((balance) => { if (active) setUcurrBalance(balance); })
+      .catch((error) => { if (active) setUcurrError(error instanceof Error ? error.message : "Could not read uCURR."); })
+      .finally(() => { if (active) setUcurrLoading(false); });
+    return () => { active = false; };
+  }, [selectedEvm, wallets.ethereum?.address, ucurrAddress]);
 
   function refreshWalletOptions() {
     window.dispatchEvent(new Event("eip6963:requestProvider"));
@@ -197,13 +224,22 @@ export default function Portal() {
   async function refreshBalance() {
     if (!selectedEvm || !wallets.ethereum) return;
     setTcurrLoading(true);
+    setUcurrLoading(true);
     setTcurrError("");
-    try {
-      const raw = await selectedEvm.provider.request({ method: "eth_getBalance", params: [wallets.ethereum.address, "latest"] }) as string;
-      setWallets((current) => ({ ...current, ethereum: current.ethereum && { ...current.ethereum, balance: `${displayAmount(Number(BigInt(raw)) / 1e18)} ETH` } }));
-      if (tcurrAddress) setTcurrBalance(await readTCurrBalance(selectedEvm.provider, tcurrAddress, wallets.ethereum.address));
-    } catch (error) { setTcurrError(error instanceof Error ? error.message : "Could not refresh balance."); }
-    finally { setTcurrLoading(false); }
+    setUcurrError("");
+    const provider = selectedEvm.provider;
+    const address = wallets.ethereum.address;
+    await Promise.allSettled([
+      provider.request({ method: "eth_getBalance", params: [address, "latest"] })
+        .then((raw) => setWallets((current) => ({ ...current, ethereum: current.ethereum && { ...current.ethereum, balance: `${displayAmount(Number(BigInt(raw as string)) / 1e18)} ETH` } })))
+        .catch(() => setNotice("Could not refresh Sepolia ETH right now.")),
+      tcurrAddress ? readTCurrBalance(provider, tcurrAddress, address)
+        .then(setTcurrBalance).catch((error) => setTcurrError(error instanceof Error ? error.message : "Could not refresh tCURR.")) : Promise.resolve(),
+      ucurrAddress ? readTokenBalance(provider, ucurrAddress, address, "uCURR")
+        .then(setUcurrBalance).catch((error) => setUcurrError(error instanceof Error ? error.message : "Could not refresh uCURR.")) : Promise.resolve(),
+    ]);
+    setTcurrLoading(false);
+    setUcurrLoading(false);
   }
 
   function saveTcurrAddress() {
@@ -214,10 +250,26 @@ export default function Portal() {
     setNotice("tCURR contract saved for this browser.");
   }
 
+  function saveUcurrAddress() {
+    const address = ucurrDraft.trim();
+    if (!validEthereumAddress(address)) { setNotice("Enter a valid uCURR contract address."); return; }
+    setUcurrAddress(address);
+    try { localStorage.setItem(UTOKEN_ADDRESS_KEY, address); } catch { /* Optional browser storage may be unavailable. */ }
+    setNotice("uCURR contract saved for this browser.");
+  }
+
   async function addTokenToWallet() {
     if (!selectedEvm || !tcurrBalance) return;
     try {
       await suggestTokenInWallet(selectedEvm.provider, tcurrBalance);
+      setNotice("Check your wallet to confirm the token import.");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not add token to wallet."); }
+  }
+
+  async function addUcurrToWallet() {
+    if (!selectedEvm || !ucurrBalance) return;
+    try {
+      await suggestTokenInWallet(selectedEvm.provider, ucurrBalance, "uCURR");
       setNotice("Check your wallet to confirm the token import.");
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not add token to wallet."); }
   }
@@ -249,17 +301,17 @@ export default function Portal() {
       <button className="header-wallet-button" onClick={() => { refreshWalletOptions(); setPickerOpen(true); }} disabled={busy}>{busy ? "Connecting…" : connected ? shortAddress(wallets.ethereum?.address || wallets.solana!.address) : "Connect wallet"}</button>
     </div></header>
     <main className="main-container">
-      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? "Your wallet, made simple." : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? "Connect a wallet to see your real testnet balances." : tab === "swap" ? "Preview a swap before this feature goes live." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "Your tCURR balance is visible now. Airdrop claims will open after the rules are approved."}</p></div>{tab === "balance" && connected && <button className="outline-button" onClick={refreshBalance} disabled={!wallets.ethereum || tcurrLoading}>Refresh balances</button>}</div>
+      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? "Your wallet, made simple." : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? "Connect a wallet to see your real testnet balances." : tab === "swap" ? "Preview a swap before this feature goes live." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "Your tCURR balance is visible now. Airdrop claims will open after the rules are approved."}</p></div>{tab === "balance" && connected && <button className="outline-button" onClick={refreshBalance} disabled={!wallets.ethereum || tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss message">×</button></div>}
 
       {tab === "balance" && <>
         {!connected && <section className="connect-hero"><div className="hero-symbol" aria-hidden="true"><BrandMark /></div><div><h2>See what&apos;s in your wallet</h2><p>Your balances appear here after you connect. You don&apos;t need to type an address.</p><button className="primary-button" onClick={() => { refreshWalletOptions(); setPickerOpen(true); }}>Connect wallet <ArrowIcon /></button></div></section>}
         <div className="balance-grid">
           <section className="balance-card featured"><div className="card-kicker"><span className="token-emblem">t</span> tCURR <span className="card-network">ETHEREUM SEPOLIA</span></div><div className={tcurrBalance ? "large-balance" : "large-balance empty-balance"}>{balanceLabel}</div><div className="balance-caption">{tcurrBalance ? "Your live token balance" : tcurrError || (!tcurrAddress && wallets.ethereum ? "A tCURR contract needs to be set up first." : "Tokenized shares · test token")}</div>{tcurrBalance && <button className="light-button" onClick={addTokenToWallet}>Show in wallet <span>↗</span></button>}</section>
-          <div className="side-balances"><section className="balance-card"><div className="card-kicker"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</div><div className="medium-balance">{wallets.ethereum ? wallets.ethereum.balance : "—"}</div><div className="balance-caption">{wallets.ethereum ? shortAddress(wallets.ethereum.address) : "Connect MetaMask or another Ethereum wallet"}</div></section><section className="balance-card"><div className="card-kicker"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</div><div className="medium-balance">{wallets.solana ? wallets.solana.balance : "—"}</div><div className="balance-caption">{wallets.solana ? shortAddress(wallets.solana.address) : "Connect Phantom or another Solana wallet"}</div></section></div>
+          <div className="side-balances"><section className="balance-card"><div className="card-kicker"><span className="coin-symbol utility-symbol">u</span> uCURR</div><div className="medium-balance">{!wallets.ethereum ? "—" : !ucurrAddress ? "Not set up" : ucurrLoading ? "Reading…" : ucurrError ? "Unavailable" : ucurrBalance ? ucurrBalance.display : "—"}</div><div className="balance-caption">{ucurrError || (ucurrBalance ? "Your live Sepolia balance" : "Test utility token")}</div>{ucurrBalance && <button className="small-link" onClick={addUcurrToWallet}>Show in wallet ↗</button>}</section><section className="balance-card"><div className="card-kicker"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</div><div className="medium-balance">{wallets.ethereum ? wallets.ethereum.balance : "—"}</div><div className="balance-caption">{wallets.ethereum ? shortAddress(wallets.ethereum.address) : "Connect MetaMask or another Ethereum wallet"}</div></section><section className="balance-card"><div className="card-kicker"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</div><div className="medium-balance">{wallets.solana ? wallets.solana.balance : "—"}</div><div className="balance-caption">{wallets.solana ? shortAddress(wallets.solana.address) : "Connect Phantom or another Solana wallet"}</div></section></div>
         </div>
-        {connected && <section className="connected-panel"><div><span className="panel-label">CONNECTED WALLETS</span>{wallets.ethereum && <p><strong>{wallets.ethereum.name}</strong><span>{shortAddress(wallets.ethereum.address)} · Sepolia</span></p>}{wallets.solana && <p><strong>{wallets.solana.name}</strong><span>{shortAddress(wallets.solana.address)} · Devnet balance</span></p>}</div><div className="connected-actions"><button className="text-button" onClick={() => { refreshWalletOptions(); setPickerOpen(true); }}>Connect another</button><button className="text-button" onClick={() => { setWallets({}); setSelectedEvm(null); setTcurrBalance(null); }}>Disconnect</button></div></section>}
-        <details className="token-settings"><summary>Set up tCURR test token <span aria-hidden="true">⌄</span></summary><div><p>After the tCURR contract is deployed on Sepolia, enter its contract address here. This is different from your wallet address.</p><div className="setting-row"><input value={tcurrDraft} onChange={(event) => setTcurrDraft(event.target.value)} placeholder="tCURR contract address (0x…)" aria-label="tCURR contract address" spellCheck={false} autoComplete="off" /><button className="outline-button" onClick={saveTcurrAddress}>Save</button></div>{tcurrAddress && <p className="contract-current">Using {shortAddress(tcurrAddress)}</p>}</div></details>
+        {connected && <section className="connected-panel"><div><span className="panel-label">CONNECTED WALLETS</span>{wallets.ethereum && <p><strong>{wallets.ethereum.name}</strong><span>{shortAddress(wallets.ethereum.address)} · Sepolia</span></p>}{wallets.solana && <p><strong>{wallets.solana.name}</strong><span>{shortAddress(wallets.solana.address)} · Devnet balance</span></p>}</div><div className="connected-actions"><button className="text-button" onClick={() => { refreshWalletOptions(); setPickerOpen(true); }}>Connect another</button><button className="text-button" onClick={() => { setWallets({}); setSelectedEvm(null); setTcurrBalance(null); setUcurrBalance(null); }}>Disconnect</button></div></section>}
+        <details className="token-settings"><summary>Set up test tokens <span aria-hidden="true">⌄</span></summary><div><p>Ready to create test tCURR and uCURR? The setup page guides you through MetaMask approval.</p><a className="setup-link" href="/setup">Open token setup <span aria-hidden="true">↗</span></a><p className="manual-setting-label">Already deployed? Enter the Sepolia contract addresses:</p><div className="setting-row"><input value={tcurrDraft} onChange={(event) => setTcurrDraft(event.target.value)} placeholder="tCURR contract address (0x…)" aria-label="tCURR contract address" spellCheck={false} autoComplete="off" /><button className="outline-button" onClick={saveTcurrAddress}>Save</button></div><div className="setting-row"><input value={ucurrDraft} onChange={(event) => setUcurrDraft(event.target.value)} placeholder="uCURR contract address (0x…)" aria-label="uCURR contract address" spellCheck={false} autoComplete="off" /><button className="outline-button" onClick={saveUcurrAddress}>Save</button></div></div></details>
       </>}
 
       {tab === "swap" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Swap preview</h2><span className="preview-pill">PREVIEW ONLY</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={swapAmount} onChange={(event) => setSwapAmount(event.target.value)} aria-label="Amount of uCURR to swap" /><strong>uCURR</strong></div></label><div className="swap-arrow" aria-hidden="true">↓</div><div className="amount-box result-box"><span>You receive (estimated)</span><div><b>{displayAmount(Math.max(0, Number(swapAmount) || 0) / 10, 2)}</b><strong>USDC</strong></div></div><button className="primary-button full-button" onClick={() => requestAction("swap")}>{connected ? "Continue to swap" : "Connect wallet"}<ArrowIcon /></button><p className="transaction-note">Illustrative rate only. No swap or token transfer is available yet.</p></section><aside className="feature-aside"><div className="aside-icon">⇄</div><h3>Before you swap</h3><p>Identity verification will be required when swaps become available. Your tCURR shares are not used in this swap.</p></aside></div>}
