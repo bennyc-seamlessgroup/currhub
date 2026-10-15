@@ -92,6 +92,12 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .swap-arrow{height:43px;width:43px;border-radius:12px;border:4px solid #fff;background:#e9efff;color:#5470d6;display:grid;place-items:center;font-size:23px;font-weight:900;margin:-10px auto;position:relative;z-index:1}
 .swap-arrow:hover{background:#dce5ff}
 .result-box{margin-bottom:23px}
+.buy-card .amount-box{margin-bottom:12px}
+.buy-card .buy-result{margin-bottom:20px}
+.buy-result b{font-size:clamp(25px,4vw,36px)}
+.buy-disabled{margin-top:24px;background:#aab6ca;box-shadow:none;opacity:1!important}
+.buy-disabled:hover{background:#aab6ca}
+.buy-disabled span{font-size:12px;font-weight:700}
 .swap-details{display:flex;justify-content:space-between;gap:12px;padding:10px 2px;color:#7d8ba0;font-size:13px}
 .swap-details strong{color:#243653;text-align:right}
 .swap-message{color:#405fac;font-size:13px;font-weight:700;line-height:1.5;margin:14px 0 0}

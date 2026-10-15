@@ -6,6 +6,7 @@ import { brand } from "@/lib/brand";
 import { readTCurrBalance, readTokenBalance, readTokenOwner, suggestTokenInWallet, TCURR_SEPOLIA_ADDRESS, UCURR_SEPOLIA_ADDRESS, type TokenBalance, type TCurrBalance } from "@/lib/tcurr";
 import WalletPicker, { type WalletChoice } from "@/components/WalletPicker";
 import SwapPanel from "@/components/SwapPanel";
+import BuyPanel from "@/components/BuyPanel";
 import AirdropPanel from "@/components/AirdropPanel";
 import { clearWalletSession, readWalletSession, saveWalletSession } from "@/lib/wallet-session";
 
@@ -93,7 +94,6 @@ export default function Portal() {
   const [ucurrError, setUcurrError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [buyAmount, setBuyAmount] = useState("50");
 
   useEffect(() => {
     const onAnnounce = (event: Event) => {
@@ -396,7 +396,7 @@ export default function Portal() {
       </div>
     </div></header>
     <main className="main-container">
-      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? connected ? "Your tokenized shares and rewards" : "Connect your tokenized shares wallet" : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? wallets.solana ? "tCURR and uCURR are currently on Ethereum Sepolia. Switch to an Ethereum wallet to view them." : "View your tCURR and uCURR test token balances and check for rewards." : tab === "swap" ? "Exchange uCURR and USDC directly from your wallet." : tab === "buy" ? "Explore the purchase flow. No payment will be taken." : "See available uCURR rewards and claim them to your connected wallet."}</p></div>{tab === "balance" && connected && <div className="page-top-actions">{wallets.ethereum && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</span><strong>{wallets.ethereum.balance}</strong></div>}{wallets.solana && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</span><strong>{wallets.solana.balance}</strong></div>}{wallets.ethereum && <button className="outline-button" onClick={refreshBalance} disabled={tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>}</div>
+      <div className="page-top"><div><span className="network-label"><span className="status-dot" />TEST NETWORKS</span><h1>{tab === "balance" ? connected ? "Your tokenized shares and rewards" : "Connect your tokenized shares wallet" : tab === "swap" ? "Swap tokens" : tab === "buy" ? "Buy uCURR" : "Airdrop"}</h1><p>{tab === "balance" ? wallets.solana ? "tCURR and uCURR are currently on Ethereum Sepolia. Switch to an Ethereum wallet to view them." : "View your tCURR and uCURR test token balances and check for rewards." : tab === "swap" ? "Exchange uCURR and USDC directly from your wallet." : tab === "buy" ? "Explore the current market reference while card purchases are being prepared." : "See available uCURR rewards and claim them to your connected wallet."}</p></div>{tab === "balance" && connected && <div className="page-top-actions">{wallets.ethereum && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol eth-symbol">◆</span> Sepolia ETH</span><strong>{wallets.ethereum.balance}</strong></div>}{wallets.solana && <div className="native-balance"><span className="native-balance-label"><span className="coin-symbol sol-symbol">≋</span> Devnet SOL</span><strong>{wallets.solana.balance}</strong></div>}{wallets.ethereum && <button className="outline-button" onClick={refreshBalance} disabled={tcurrLoading || ucurrLoading}>Refresh balances</button>}</div>}</div>
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss message">×</button></div>}
 
       {tab === "balance" && <>
@@ -409,7 +409,7 @@ export default function Portal() {
 
       {tab === "swap" && <SwapPanel provider={selectedEvm?.provider || null} wallet={wallets.ethereum?.address || ""} connectedToSolana={Boolean(wallets.solana)} onConnect={() => { refreshWalletOptions(); setPickerOpen(true); }} onSuccess={refreshBalance} />}
 
-      {tab === "buy" && <div className="feature-layout"><section className="feature-card"><div className="feature-card-title"><h2>Purchase preview</h2><span className="preview-pill">SANDBOX</span></div><label className="amount-box"><span>You pay</span><div><input type="number" min="0" step="0.01" value={buyAmount} onChange={(event) => setBuyAmount(event.target.value)} aria-label="Purchase amount in US dollars" /><strong>USD</strong></div></label><div className="quote-line"><span>Illustrative uCURR amount</span><strong>{displayAmount(Math.max(0, Number(buyAmount) || 0) * 10, 2)} uCURR</strong></div><div className="quote-line"><span>Charged today</span><strong>$0.00</strong></div><p className="transaction-note">Preview only. No card details are collected, and no charge or token delivery occurs.</p></section><aside className="feature-aside"><div className="aside-icon">◈</div><h3>A safe first look</h3><p>Card checkout is not connected yet. This page only shows an example amount.</p></aside></div>}
+      {tab === "buy" && <BuyPanel />}
 
       {tab === "airdrop" && <AirdropPanel provider={selectedEvm?.provider || null} address={wallets.ethereum?.address || ""} solanaConnected={Boolean(wallets.solana)} onConnect={() => { refreshWalletOptions(); setPickerOpen(true); }} currentTCurr={tcurrBalance?.display ?? (tcurrError ? "Unavailable" : null)} onClaim={refreshBalance} />}
     </main>
