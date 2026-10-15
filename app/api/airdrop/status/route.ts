@@ -81,6 +81,6 @@ export async function POST(request: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ saved: true });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not submit identity review." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not save your stakeholder profile." }, { status: 400 });
   }
 }
