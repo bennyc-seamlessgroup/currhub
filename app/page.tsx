@@ -81,7 +81,10 @@ export default function Portal() {
   const [selectedEvm, setSelectedEvm] = useState<EvmWallet | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
+  const mobileNavRef = useRef<HTMLElement>(null);
+  const menuToggleRef = useRef<HTMLButtonElement>(null);
   const restoringRef = useRef(false);
   const [airdropOwnerWallet, setAirdropOwnerWallet] = useState("");
   const tcurrAddress = TCURR_SEPOLIA_ADDRESS;
@@ -208,6 +211,22 @@ export default function Portal() {
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [walletMenuOpen]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !mobileNavRef.current?.contains(event.target) && !menuToggleRef.current?.contains(event.target)) setMobileMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     if (!selectedEvm || !wallets.ethereum || !tcurrAddress) {
@@ -388,10 +407,11 @@ export default function Portal() {
 
   return <div className="app-shell">
     <header className="site-header"><div className="header-inner">
-      <button className="brand-button" onClick={() => setTab("balance")} aria-label="CURR Hub, wallet balance"><BrandMark /><span>{brand.name}</span></button>
-      <nav className="top-nav" aria-label="Main navigation">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "tab active" : "tab"} onClick={() => { setTab(item.id); setNotice(""); }}>{item.label}</button>)}{isAirdropOwner && <a className="admin-nav-link" href="/admin">Admin</a>}</nav>
+      <button className="brand-button" onClick={() => { setTab("balance"); setMobileMenuOpen(false); }} aria-label="CURR Hub, wallet balance"><BrandMark /><span>{brand.name}</span></button>
+      <nav id="primary-navigation" ref={mobileNavRef} className={mobileMenuOpen ? "top-nav mobile-open" : "top-nav"} aria-label="Main navigation">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "tab active" : "tab"} onClick={() => { setTab(item.id); setNotice(""); setMobileMenuOpen(false); }}>{item.label}</button>)}{isAirdropOwner && <a className="tab admin-tab" href="/admin">Admin</a>}</nav>
+      <button ref={menuToggleRef} className="mobile-menu-toggle" type="button" aria-label={mobileMenuOpen ? "Close menu" : "Open menu"} aria-controls="primary-navigation" aria-expanded={mobileMenuOpen} onClick={() => { setWalletMenuOpen(false); setMobileMenuOpen((open) => !open); }}><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d={mobileMenuOpen ? "M5 5l14 14M19 5L5 19" : "M4 7h16M4 12h16M4 17h16"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg></button>
       <div className="header-wallet-menu" ref={walletMenuRef}>
-        <button className="header-wallet-button" onClick={() => { if (connected) setWalletMenuOpen((open) => !open); else { refreshWalletOptions(); setPickerOpen(true); } }} disabled={busy} aria-expanded={connected ? walletMenuOpen : undefined} aria-controls={connected ? "wallet-menu" : undefined}>{busy ? "Connecting…" : connected ? <>{shortAddress(wallets.ethereum?.address || wallets.solana!.address)} <span aria-hidden="true">⌄</span></> : "Connect wallet"}</button>
+        <button className="header-wallet-button" onClick={() => { setMobileMenuOpen(false); if (connected) setWalletMenuOpen((open) => !open); else { refreshWalletOptions(); setPickerOpen(true); } }} disabled={busy} aria-expanded={connected ? walletMenuOpen : undefined} aria-controls={connected ? "wallet-menu" : undefined}>{busy ? "Connecting…" : connected ? <>{shortAddress(wallets.ethereum?.address || wallets.solana!.address)} <span aria-hidden="true">⌄</span></> : "Connect wallet"}</button>
         {connected && walletMenuOpen && <div className="wallet-dropdown" id="wallet-menu"><div className="wallet-dropdown-info"><strong>{wallets.ethereum?.name || wallets.solana?.name}</strong><span>{wallets.ethereum ? "Ethereum Sepolia" : "Solana Devnet"}</span></div><button onClick={() => { setWalletMenuOpen(false); refreshWalletOptions(); setPickerOpen(true); }}>Switch wallet</button><button onClick={disconnectWallet}>Disconnect</button></div>}
       </div>
     </div></header>
