@@ -3,14 +3,14 @@
 import { useEffect, useState } from "react";
 import { BrowserProvider, Contract, ContractFactory, formatUnits } from "ethers";
 import { airdropRequest, signInForAirdrop } from "@/lib/airdrop-client";
-import { TCURR_SEPOLIA_DEPLOYMENT_BLOCK, UCURR_SEPOLIA_ADDRESS } from "@/lib/tcurr";
+import { UCURR_SEPOLIA_ADDRESS } from "@/lib/tcurr";
 import artifacts from "@/lib/test-contract-artifacts.json";
 
 type Injected = { request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>; on?: (event: string, listener: () => void) => void; removeListener?: (event: string, listener: () => void) => void; isMetaMask?: boolean; providers?: Injected[] };
-type Campaign = { id: string; title: string; status: string; snapshot_block: number; snapshot_start: number; pool_wei: string; deadline: string; merkle_root: string | null; onchain_id: number | null; publish_tx: string | null };
-type Identity = { wallet: string; full_name: string; email: string; country: string; status: string; submitted_at: string };
+type Campaign = { id: string; title: string; status: string; snapshot_at: string | null; snapshot_block: number | null; snapshot_cursor_block: number | null; snapshot_error: string | null; ratio_shares: number | null; ratio_reward_wei: string | null; minimum_wei: string | null; maximum_wei: string | null; pool_wei: string; allocated_wei: string; deadline: string; merkle_root: string | null; onchain_id: number | null; publish_tx: string | null };
+type Profile = { wallet: string; full_name: string; email: string; company: string; role: string; country: string; relationship: string; marketing_opt_in: boolean; updated_at: string };
 type Allocation = { wallet: string; shares: string; amount_wei: string };
-type AdminData = { configured: boolean; contractAddress: string | null; campaigns: Campaign[]; identities: Identity[]; allocations: Allocation[] };
+type AdminData = { configured: boolean; contractAddress: string | null; campaigns: Campaign[]; profiles: Profile[]; allocations: Allocation[] };
 
 const claimAbi = ["function reserved() view returns (uint256)", "function createCampaign(bytes32,uint256,uint64) returns (uint256)"];
 const rewardAbi = ["function balanceOf(address) view returns (uint256)", "function mint(address,uint256)"];
@@ -33,11 +33,14 @@ export default function AdminAirdrop() {
   const [message, setMessage] = useState("");
   const [contractInput, setContractInput] = useState("");
   const [title, setTitle] = useState("uCURR reward round");
-  const [startBlock, setStartBlock] = useState(String(TCURR_SEPOLIA_DEPLOYMENT_BLOCK));
-  const [snapshotBlock, setSnapshotBlock] = useState("");
+  const [snapshotAt, setSnapshotAt] = useState("");
+  const [ratioShares, setRatioShares] = useState("10");
+  const [ratioReward, setRatioReward] = useState("1");
+  const [minimum, setMinimum] = useState("");
+  const [maximum, setMaximum] = useState("");
   const [pool, setPool] = useState("100");
+  const [revisedPool, setRevisedPool] = useState("");
   const [deadline, setDeadline] = useState("");
-  const [ruleApproved, setRuleApproved] = useState(false);
   const [syncHash, setSyncHash] = useState("");
   const [contractAvailable, setContractAvailable] = useState<string | null>(null);
 
@@ -120,7 +123,7 @@ export default function AdminAirdrop() {
     setBusy(name); setMessage("");
     try {
       const result = await airdropRequest("/api/admin/airdrop", { action: name, ...payload });
-      setMessage(name === "create" ? `Airdrop plan saved. Found ${result.holders} tCURR holder wallets.` : "Saved.");
+      setMessage(name === "create" ? "Reward round scheduled. Holdings will be recorded at the chosen time." : name === "run_due" ? `Snapshot check: ${result.state || "complete"}.` : "Saved.");
       await load(name === "create" ? result.id as string : selected);
       return result;
     } catch (error) { setMessage(errorText(error)); return null; }
@@ -147,23 +150,12 @@ export default function AdminAirdrop() {
     finally { setBusy(""); }
   }
 
-  async function latestSafeBlock() {
-    if (!provider) return;
-    try { await ensureSepolia(provider); setSnapshotBlock(String((await new BrowserProvider(provider).getBlockNumber()) - 6)); }
-    catch (error) { setMessage(errorText(error)); }
-  }
-
-  function findStartBlock() {
-    setStartBlock(String(TCURR_SEPOLIA_DEPLOYMENT_BLOCK));
-    setMessage(`tCURR started at block ${TCURR_SEPOLIA_DEPLOYMENT_BLOCK.toLocaleString("en-US")}.`);
-  }
-
   async function fund(campaign: Campaign) {
     if (!provider || !data?.contractAddress) return;
     setBusy("fund"); setMessage("");
     try {
       await ensureSepolia(provider);
-      const shortfall = BigInt(campaign.pool_wei) - BigInt(contractAvailable || "0");
+      const shortfall = BigInt(campaign.allocated_wei) - BigInt(contractAvailable || "0");
       if (shortfall <= 0n) throw new Error("The claim contract already has enough unreserved uCURR.");
       const signer = await new BrowserProvider(provider).getSigner(wallet);
       const token = new Contract(UCURR_SEPOLIA_ADDRESS, rewardAbi, signer);
@@ -184,7 +176,7 @@ export default function AdminAirdrop() {
       await ensureSepolia(provider);
       const signer = await new BrowserProvider(provider).getSigner(wallet);
       const contract = new Contract(data.contractAddress, claimAbi, signer);
-      const tx = await contract.createCampaign(campaign.merkle_root, BigInt(campaign.pool_wei), BigInt(Math.floor(new Date(campaign.deadline).valueOf() / 1000)));
+      const tx = await contract.createCampaign(campaign.merkle_root, BigInt(campaign.allocated_wei), BigInt(Math.floor(new Date(campaign.deadline).valueOf() / 1000)));
       setSyncHash(tx.hash);
       setMessage(`Publishing submitted: ${tx.hash}`);
       const receipt = await tx.wait();
@@ -196,18 +188,51 @@ export default function AdminAirdrop() {
   }
 
   const campaign = data?.campaigns.find((item) => item.id === selected);
-  const approved = new Set(data?.identities.filter((identity) => identity.status === "approved").map((identity) => identity.wallet));
-  const eligibleCount = data?.allocations.filter((row) => approved.has(row.wallet)).length || 0;
 
-  return <div className="app-shell setup-shell"><header className="site-header"><div className="header-inner"><a className="brand-button" href="/"><span className="brand-mark">C</span><span>CURR Hub</span></a><a className="outline-button" href="/">← Back to portal</a></div></header><main className="main-container setup-container admin-container"><div className="page-top"><div><span className="network-label"><span className="status-dot" />ETHEREUM SEPOLIA</span><h1>Airdrop admin</h1><p>Create a tCURR snapshot, review test identity submissions, and publish uCURR rewards.</p></div></div>
-    {message && <div className="notice" role="status">{message}</div>}
-    {configured === false && <section className="feature-card"><h2>Database setup needed</h2><p>Follow the README airdrop setup steps to create Supabase tables and add server settings. No claims are open yet.</p></section>}
-    {configured !== false && !isAdmin && <section className="feature-card"><h2>Admin wallet</h2><p>Connect the authorized MetaMask wallet and sign a message. No network fee is charged for sign-in.</p><button className="primary-button" disabled={Boolean(busy)} onClick={connect}>{busy ? "Waiting for wallet…" : "Connect admin wallet →"}</button></section>}
-    {isAdmin && data && <div className="admin-stack">
-      <section className="feature-card"><div className="feature-card-title"><h2>1. Claim contract</h2><span className="preview-pill">TEST NETWORK</span></div>{data.contractAddress ? <><p>Connected: <a className="admin-link" target="_blank" rel="noopener noreferrer" href={`https://sepolia.etherscan.io/address/${data.contractAddress}`}>{data.contractAddress} ↗</a></p><p>Available for a new reward round: {contractAvailable === null ? "Reading…" : `${tokens(contractAvailable)} uCURR`}</p></> : <><p>Deploy the Sepolia claim contract with your admin MetaMask wallet. Your wallet will ask you to approve the transaction.</p><button className="primary-button" disabled={Boolean(busy)} onClick={deploy}>{busy === "deploy" ? "Waiting for MetaMask…" : "Deploy claim contract →"}</button><div className="admin-setting-row"><input aria-label="Existing claim contract address" placeholder="Already deployed? Paste contract address" value={contractInput} onChange={(event) => setContractInput(event.target.value)} /><button className="outline-button" disabled={Boolean(busy)} onClick={() => action("set_contract", { address: contractInput })}>Use this contract</button></div></>}</section>
-      <section className="feature-card"><h2>2. Plan an airdrop</h2><p>A draft round is a saved plan for one airdrop. It records each wallet’s tCURR balance at a chosen block, the proposed uCURR reward pool, and the claim deadline. Click Find automatically and Use latest safe block to fill the block numbers. Saving this plan does not send tokens or open claims.</p><div className="admin-fields"><label>Airdrop name<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>tCURR start block<input type="number" min="0" value={startBlock} onChange={(event) => setStartBlock(event.target.value)} /><button className="text-button" disabled={Boolean(busy)} onClick={findStartBlock}>{busy === "find_start" ? "Finding…" : "Find automatically"}</button></label><label>Snapshot block<input type="number" min="0" value={snapshotBlock} onChange={(event) => setSnapshotBlock(event.target.value)} /><button className="text-button" onClick={latestSafeBlock}>Use latest safe block</button></label><label>Reward pool (uCURR)<input value={pool} onChange={(event) => setPool(event.target.value)} /></label><label>Claim deadline<input type="datetime-local" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label></div><button className="primary-button" disabled={Boolean(busy) || !startBlock || !snapshotBlock || !deadline} onClick={() => action("create", { title, startBlock: Number(startBlock), snapshotBlock: Number(snapshotBlock), pool, deadline: new Date(deadline).toISOString() })}>{busy === "create" ? "Reading tCURR history…" : "Save airdrop plan →"}</button></section>
-      <section className="feature-card"><h2>3. Review identity submissions</h2><p>This is a manual test review, not formal KYC. Only approved wallets enter the final reward calculation.</p>{data.identities.length ? <div className="admin-list">{data.identities.map((identity) => <div className="admin-list-row" key={identity.wallet}><div><strong>{identity.full_name}</strong><span>{short(identity.wallet)} · {identity.country} · {identity.email || "No email"}</span><small>{identity.status}</small></div>{identity.status === "submitted" && <div className="admin-row-actions"><button className="outline-button" disabled={Boolean(busy)} onClick={() => action("review", { wallet: identity.wallet, status: "approved" })}>Approve</button><button className="outline-button" disabled={Boolean(busy)} onClick={() => action("review", { wallet: identity.wallet, status: "rejected" })}>Reject</button></div>}</div>)}</div> : <p>No submissions yet.</p>}</section>
-      <section className="feature-card"><h2>4. Review and publish</h2>{data.campaigns.length === 0 ? <p>Save an airdrop plan first.</p> : <><select className="admin-select" aria-label="Select airdrop" value={selected} onChange={(event) => { setSelected(event.target.value); void load(event.target.value).catch((error) => setMessage(errorText(error))); }}>{data.campaigns.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.status}</option>)}</select>{campaign && <><div className="admin-summary"><span>tCURR holders: <strong>{data.allocations.length}</strong></span><span>Approved holders: <strong>{eligibleCount}</strong></span><span>Reward pool: <strong>{tokens(campaign.pool_wei)} uCURR</strong></span><span>Snapshot: <strong>#{campaign.snapshot_block}</strong></span></div><div className="admin-list">{data.allocations.map((row) => <div className="admin-list-row" key={row.wallet}><span>{short(row.wallet)}</span><span>{row.shares} tCURR</span><strong>{campaign.status === "draft" ? approved.has(row.wallet) ? "Approved" : "Awaiting review" : `${tokens(row.amount_wei)} uCURR`}</strong></div>)}</div>{campaign.status === "draft" && <><label className="airdrop-check admin-confirm"><input type="checkbox" checked={ruleApproved} onChange={(event) => setRuleApproved(event.target.checked)} /> I confirm management approved this snapshot, pool, and proportional reward rule.</label><button className="primary-button" disabled={Boolean(busy) || !ruleApproved || eligibleCount === 0 || !data.contractAddress} onClick={() => action("prepare", { campaignId: campaign.id, ruleApproved })}>Freeze approved allocations →</button></>}{campaign.status === "prepared" && <><p>Allocations are frozen. Fund the claim contract, then publish this round with MetaMask.</p><button className="outline-button" disabled={Boolean(busy) || contractAvailable === null || BigInt(contractAvailable) >= BigInt(campaign.pool_wei)} onClick={() => fund(campaign)}>Mint {tokens(BigInt(campaign.pool_wei) - BigInt(contractAvailable || "0"))} uCURR to claim contract</button><button className="primary-button admin-publish" disabled={Boolean(busy) || contractAvailable === null || BigInt(contractAvailable) < BigInt(campaign.pool_wei)} onClick={() => publish(campaign)}>Publish round on Sepolia →</button><div className="admin-setting-row"><input aria-label="Publish transaction hash" placeholder="Already published? Enter transaction hash" value={syncHash} onChange={(event) => setSyncHash(event.target.value)} /><button className="outline-button" disabled={Boolean(busy) || !syncHash} onClick={() => action("finalize", { campaignId: campaign.id, txHash: syncHash })}>Sync published round</button></div></>}{campaign.status === "published" && <p>Published on Sepolia. Round #{campaign.onchain_id}. <a className="admin-link" href={`https://sepolia.etherscan.io/tx/${campaign.publish_tx}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a></p>}</>}</>}</section>
-    </div>}
-  </main></div>;
+  return <div className="app-shell setup-shell">
+    <header className="site-header"><div className="header-inner"><a className="brand-button" href="/"><span className="brand-mark">C</span><span>CURR Hub</span></a><a className="outline-button" href="/">← Back to portal</a></div></header>
+    <main className="main-container setup-container admin-container">
+      <div className="page-top"><div><span className="network-label"><span className="status-dot" />ETHEREUM SEPOLIA</span><h1>Airdrop admin</h1><p>Schedule a snapshot, set the reward ratio, and open claims.</p></div></div>
+      {message && <div className="notice" role="status">{message}</div>}
+      {configured === false && <section className="feature-card"><h2>Database setup needed</h2><p>Complete the airdrop database setup before scheduling rewards.</p></section>}
+      {configured !== false && !isAdmin && <section className="feature-card"><h2>Admin wallet</h2><p>Connect the authorized MetaMask wallet and sign a message. Sign-in has no network fee.</p><button className="primary-button" disabled={Boolean(busy)} onClick={connect}>{busy ? "Waiting for wallet…" : "Connect admin wallet →"}</button></section>}
+      {isAdmin && data && <div className="admin-stack">
+        <section className="feature-card"><div className="feature-card-title"><h2>1. Claim contract</h2><span className="preview-pill">TEST NETWORK</span></div>
+          {data.contractAddress ? <><p>Connected: <a className="admin-link" target="_blank" rel="noopener noreferrer" href={`https://sepolia.etherscan.io/address/${data.contractAddress}`}>{data.contractAddress} ↗</a></p><p>Available for a new reward round: {contractAvailable === null ? "Reading…" : `${tokens(contractAvailable)} uCURR`}</p></> : <><p>Deploy the Sepolia claim contract with your admin wallet.</p><button className="primary-button" disabled={Boolean(busy)} onClick={deploy}>{busy === "deploy" ? "Waiting for MetaMask…" : "Deploy claim contract →"}</button><div className="admin-setting-row"><input aria-label="Existing claim contract address" placeholder="Already deployed? Paste contract address" value={contractInput} onChange={(event) => setContractInput(event.target.value)} /><button className="outline-button" disabled={Boolean(busy)} onClick={() => action("set_contract", { address: contractInput })}>Use this contract</button></div></>}
+        </section>
+        <section className="feature-card"><h2>2. Schedule a reward round</h2><p>Each wallet earns a fixed amount from the tCURR it holds at the scheduled snapshot time. A larger number of holders does not reduce anyone else's rate.</p>
+          <div className="admin-fields">
+            <label>Round name<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+            <label>Snapshot date and time<input type="datetime-local" value={snapshotAt} onChange={(event) => setSnapshotAt(event.target.value)} /></label>
+            <label>tCURR in ratio<input type="number" min="1" step="1" value={ratioShares} onChange={(event) => setRatioShares(event.target.value)} /></label>
+            <label>uCURR earned<input inputMode="decimal" value={ratioReward} onChange={(event) => setRatioReward(event.target.value)} /></label>
+            <label>Minimum reward (optional)<input inputMode="decimal" placeholder="No minimum" value={minimum} onChange={(event) => setMinimum(event.target.value)} /></label>
+            <label>Maximum reward (optional)<input inputMode="decimal" placeholder="No maximum" value={maximum} onChange={(event) => setMaximum(event.target.value)} /></label>
+            <label>Maximum round budget (uCURR)<input inputMode="decimal" value={pool} onChange={(event) => setPool(event.target.value)} /></label>
+            <label>Claim deadline<input type="datetime-local" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+          </div>
+          <p>Example: 10 tCURR earns 1 uCURR, so 500 tCURR earns 50 uCURR. A minimum excludes smaller rewards; a maximum caps each wallet's reward. Leave either blank for no limit.</p>
+          <button className="primary-button" disabled={Boolean(busy) || !snapshotAt || !deadline} onClick={() => action("create", { title, snapshotAt: new Date(snapshotAt).toISOString(), ratioShares, ratioReward, minimum, maximum, pool, deadline: new Date(deadline).toISOString() })}>{busy === "create" ? "Scheduling…" : "Schedule reward round →"}</button>
+        </section>
+        <section className="feature-card"><h2>3. Review and open claims</h2>
+          {data.campaigns.length === 0 ? <p>No reward round has been scheduled.</p> : <>
+            <select className="admin-select" aria-label="Select reward round" value={selected} onChange={(event) => { setSelected(event.target.value); void load(event.target.value).catch((error) => setMessage(errorText(error))); }}>{data.campaigns.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.status}</option>)}</select>
+            {campaign && <>
+              <div className="admin-summary"><span>Snapshot: <strong>{campaign.snapshot_at ? new Date(campaign.snapshot_at).toLocaleString() : "Pending"}</strong></span><span>Rate: <strong>{campaign.ratio_shares} tCURR → {campaign.ratio_reward_wei ? tokens(campaign.ratio_reward_wei) : "—"} uCURR</strong></span><span>Calculated: <strong>{tokens(campaign.allocated_wei)} uCURR</strong></span><span>Budget: <strong>{tokens(campaign.pool_wei)} uCURR</strong></span></div>
+              {campaign.status === "scheduled" && <><p>{campaign.snapshot_block === null ? "Waiting for the scheduled time and a confirmed block." : `Reading tCURR history through block ${campaign.snapshot_block.toLocaleString("en-US")}. Progress: ${campaign.snapshot_cursor_block?.toLocaleString("en-US") || "starting"}.`}</p><button className="outline-button" disabled={Boolean(busy) || !campaign.snapshot_at || Date.now() < new Date(campaign.snapshot_at).valueOf()} onClick={() => action("run_due", {})}>Check snapshot now</button></>}
+              {campaign.snapshot_error && <p className="swap-message" role="alert">Snapshot: {campaign.snapshot_error}</p>}
+              {campaign.status === "needs_budget" && <><p>Calculated rewards exceed the budget. Increase it to at least {tokens(campaign.allocated_wei)} uCURR to open this round.</p><div className="admin-setting-row"><input aria-label="Revised round budget" placeholder="New uCURR budget" value={revisedPool} onChange={(event) => setRevisedPool(event.target.value)} /><button className="outline-button" disabled={Boolean(busy) || !revisedPool} onClick={() => action("update_budget", { campaignId: campaign.id, pool: revisedPool })}>Update budget</button></div></>}
+              {data.allocations.length > 0 && <div className="admin-list">{data.allocations.map((row) => <div className="admin-list-row" key={row.wallet}><span>{short(row.wallet)}</span><span>{row.shares} tCURR</span><strong>{tokens(row.amount_wei)} uCURR</strong></div>)}</div>}
+              {campaign.status === "prepared" && <><p>Rewards are fixed for this round. Fund the claim contract, then confirm opening it in MetaMask. Holders will claim for themselves after submitting their profile.</p><button className="outline-button" disabled={Boolean(busy) || contractAvailable === null || BigInt(contractAvailable) >= BigInt(campaign.allocated_wei)} onClick={() => fund(campaign)}>Mint {tokens(BigInt(campaign.allocated_wei) - BigInt(contractAvailable || "0"))} uCURR to claim contract</button><button className="primary-button admin-publish" disabled={Boolean(busy) || contractAvailable === null || BigInt(contractAvailable) < BigInt(campaign.allocated_wei)} onClick={() => publish(campaign)}>Open claims on Sepolia →</button><div className="admin-setting-row"><input aria-label="Publish transaction hash" placeholder="Already opened? Enter transaction hash" value={syncHash} onChange={(event) => setSyncHash(event.target.value)} /><button className="outline-button" disabled={Boolean(busy) || !syncHash} onClick={() => action("finalize", { campaignId: campaign.id, txHash: syncHash })}>Sync open round</button></div></>}
+              {campaign.status === "published" && <p>Claims are open. Round #{campaign.onchain_id}. <a className="admin-link" href={`https://sepolia.etherscan.io/tx/${campaign.publish_tx}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a></p>}
+              {campaign.status === "failed" && <p>This round could not open. Schedule a new one with an adjusted ratio or limits.</p>}
+            </>}
+          </>}
+        </section>
+        <section className="feature-card"><h2>4. Stakeholder profiles</h2><p>Connected wallet holders provide their own details. No approval is needed to claim.</p>
+          {data.profiles.length ? <div className="admin-list">{data.profiles.map((profile) => <div className="admin-list-row" key={profile.wallet}><div><strong>{profile.full_name}</strong><span>{short(profile.wallet)} · {profile.email} · {profile.country}</span><small>{profile.company || "Individual"}{profile.role ? ` · ${profile.role}` : ""} · {profile.relationship} · Updates: {profile.marketing_opt_in ? "yes" : "no"}</small></div></div>)}</div> : <p>No profiles submitted yet.</p>}
+        </section>
+      </div>}
+    </main>
+  </div>;
 }

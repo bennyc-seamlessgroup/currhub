@@ -2,7 +2,7 @@ import "server-only";
 import { Contract, getAddress } from "ethers";
 import { airdropDb } from "@/lib/server/airdrop-db";
 import { airdropRpc } from "@/lib/server/airdrop-snapshot";
-import { allocateRewardPool, buildClaimTree } from "@/lib/airdrop-chain.mjs";
+import { buildClaimTree } from "@/lib/airdrop-chain.mjs";
 import { UCURR_SEPOLIA_ADDRESS } from "@/lib/tcurr";
 
 export const CLAIM_ABI = [
@@ -35,15 +35,11 @@ export async function validateClaimContract(address: string, adminAddress: strin
 
 export async function preparedTree(campaignId: string, poolWei: string, onlyStored: boolean) {
   const db = airdropDb();
-  const [{ data: rows, error: rowsError }, { data: reviews, error: reviewsError }] = await Promise.all([
-    db.from("airdrop_allocations").select("wallet,shares,amount_wei").eq("campaign_id", campaignId).order("wallet"),
-    db.from("airdrop_identity_reviews").select("wallet,status"),
-  ]);
+  const { data: rows, error: rowsError } = await db.from("airdrop_allocations").select("wallet,shares,amount_wei").eq("campaign_id", campaignId).order("wallet");
   if (rowsError) throw rowsError;
-  if (reviewsError) throw reviewsError;
-  if (onlyStored) return buildClaimTree((rows || []).filter((row) => BigInt(row.amount_wei) > 0n).map((row) => ({ address: row.wallet, amount: row.amount_wei })));
-  const approved = new Set((reviews || []).filter((row) => row.status === "approved").map((row) => row.wallet));
-  const allocations = allocateRewardPool((rows || []).map((row) => ({ address: row.wallet, shares: row.shares, approved: approved.has(row.wallet) })), poolWei);
-  const tree = buildClaimTree(allocations);
-  return { ...tree, shares: allocations.map((row) => ({ wallet: row.address.toLowerCase(), shares: row.shares.toString(), amount_wei: row.amount.toString() })) };
+  const eligible = (rows || []).filter((row) => BigInt(row.amount_wei) > 0n);
+  const tree = buildClaimTree(eligible.map((row) => ({ address: row.wallet, amount: row.amount_wei })));
+  if (BigInt(tree.total) > BigInt(poolWei)) throw new Error("Calculated rewards exceed this round's budget.");
+  if (onlyStored) return tree;
+  return { ...tree, shares: eligible.map((row) => ({ wallet: row.wallet, shares: row.shares, amount_wei: row.amount_wei })) };
 }

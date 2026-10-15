@@ -5,14 +5,13 @@ import { BrowserProvider, Contract, formatUnits } from "ethers";
 import { airdropRequest, signInForAirdrop } from "@/lib/airdrop-client";
 import type { InjectedEthereum } from "@/lib/tcurr";
 
-type Campaign = { id: string; title: string; status: "draft" | "prepared" | "published"; snapshotBlock: number; deadline: string; shares: string; amountWei: string; claimed: boolean; paused: boolean; onchainId: number | null; proof: string[]; txHash: string | null };
-type Status = { configured: boolean; contractAddress?: string | null; identityStatus: string; campaigns: Campaign[] };
+type Campaign = { id: string; title: string; status: string; snapshotAt: string | null; snapshotBlock: number | null; deadline: string; shares: string; amountWei: string; claimed: boolean; paused: boolean; onchainId: number | null; proof: string[] };
+type Profile = { full_name: string; email: string; company: string; role: string; country: string; relationship: string; marketing_opt_in: boolean };
+type Status = { configured: boolean; contractAddress?: string | null; profile: Profile | null; campaigns: Campaign[] };
 const CLAIM_ABI = ["function claim(uint256 id,uint256 amount,bytes32[] proof)"];
 
 function amount(wei: string) {
-  const [whole, decimals = ""] = formatUnits(BigInt(wei), 18).split(".");
-  const fraction = decimals.slice(0, 3).replace(/0+$/, "");
-  return `${BigInt(whole).toLocaleString("en-US")}${fraction ? `.${fraction}` : ""}`;
+  return Number(formatUnits(BigInt(wei), 18)).toLocaleString("en-US", { maximumFractionDigits: 3 });
 }
 
 export default function AirdropPanel({ provider, address, solanaConnected, onConnect, currentTCurr, onClaim }: {
@@ -30,24 +29,29 @@ export default function AirdropPanel({ provider, address, solanaConnected, onCon
   const [error, setError] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [company, setCompany] = useState("");
+  const [role, setRole] = useState("");
   const [country, setCountry] = useState("");
+  const [relationship, setRelationship] = useState("Individual holder");
   const [consent, setConsent] = useState(false);
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!address) { setStatus(null); setSignedIn(false); return; }
-    setLoading(true);
-    setError("");
+    setLoading(true); setError("");
     try {
       const session = await airdropRequest("/api/airdrop/auth");
-      if (!session.configured) { setStatus({ configured: false, campaigns: [], identityStatus: "none" }); setSignedIn(false); return; }
+      if (!session.configured) { setStatus({ configured: false, campaigns: [], profile: null }); setSignedIn(false); return; }
       if (typeof session.address !== "string" || session.address.toLowerCase() !== address.toLowerCase()) { setSignedIn(false); setStatus(null); return; }
       setSignedIn(true);
       setStatus(await airdropRequest("/api/airdrop/status") as Status);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not check airdrops."); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not check rewards."); }
     finally { setLoading(false); }
   }, [address]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { setEditingProfile(false); setFullName(""); setEmail(""); setCompany(""); setRole(""); setCountry(""); setConsent(false); setMarketingOptIn(false); }, [address]);
 
   async function signIn() {
     if (!provider || !address) return;
@@ -57,18 +61,18 @@ export default function AirdropPanel({ provider, address, solanaConnected, onCon
     finally { setBusy(false); }
   }
 
-  async function submitIdentity(event: React.FormEvent) {
+  async function saveProfile(event: React.FormEvent) {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      await airdropRequest("/api/airdrop/status", { fullName, email, country, consent });
-      setFullName(""); setEmail(""); setCountry(""); setConsent(false);
+      await airdropRequest("/api/airdrop/status", { fullName, email, company, role, country, relationship, consent, marketingOptIn });
       await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not submit review."); }
+      setEditingProfile(false);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save your profile."); }
     finally { setBusy(false); }
   }
 
   async function claim(campaign: Campaign) {
-    if (!provider || !status?.contractAddress || !campaign.onchainId) return;
+    if (!provider || !status?.contractAddress || !campaign.onchainId || !status.profile) return;
     setBusy(true); setError("");
     try {
       const chainId = await provider.request({ method: "eth_chainId" });
@@ -83,32 +87,42 @@ export default function AirdropPanel({ provider, address, solanaConnected, onCon
     finally { setBusy(false); }
   }
 
-  const hasHolding = status?.campaigns.some((campaign) => BigInt(campaign.shares) > 0n) || false;
+  const hasReward = status?.campaigns.some((campaign) => BigInt(campaign.amountWei) > 0n) || false;
 
   return <div className="feature-layout"><section className="feature-card airdrop-card">
-    <h2>Check your rewards</h2>
-    {!address && <><p>Connect your Ethereum wallet to see whether uCURR rewards are available.</p><button className="primary-button full-button" onClick={onConnect}>Connect wallet →</button></>}
-    {solanaConnected && <p>uCURR airdrops are currently on Ethereum Sepolia. Switch to your Ethereum wallet to check rewards.</p>}
+    <h2>Your uCURR rewards</h2>
+    {!address && <><p>Connect your Ethereum wallet to see your rewards.</p><button className="primary-button full-button" onClick={onConnect}>Connect wallet →</button></>}
+    {solanaConnected && <p>uCURR rewards are currently available to Ethereum wallets.</p>}
     {address && <div className="airdrop-holding"><span>Your current tCURR balance</span><strong>{currentTCurr === null ? "Reading…" : `${currentTCurr} tCURR`}</strong></div>}
-    {address && status && !status.configured && <p>No airdrop is open yet. Please check back later.</p>}
-    {address && !status && !signedIn && !loading && <><p>Sign a wallet message to check your eligibility. This has no network fee.</p><button className="primary-button full-button" disabled={busy} onClick={signIn}>{busy ? "Waiting for wallet…" : "Check eligibility →"}</button></>}
-    {loading && <p>Checking airdrops…</p>}
+    {address && status && !status.configured && <p>No reward round is open yet.</p>}
+    {address && !status && !signedIn && !loading && <><p>Sign a wallet message to check your rewards. This has no network fee.</p><button className="primary-button full-button" disabled={busy} onClick={signIn}>{busy ? "Waiting for wallet…" : "Check rewards →"}</button></>}
+    {loading && <p>Checking rewards…</p>}
     {address && status?.configured && signedIn && <>
-      {status.campaigns.length === 0 && <p>No airdrop is available yet.</p>}
+      {status.campaigns.length === 0 && <p>No reward round is available yet.</p>}
       {status.campaigns.map((campaign) => <div className="airdrop-round" key={campaign.id}>
-        <div className="airdrop-round-head"><strong>{campaign.title}</strong><span>Snapshot block {campaign.snapshotBlock.toLocaleString("en-US")}</span></div>
-        {BigInt(campaign.shares) === 0n ? <p>This wallet was not in this round&apos;s tCURR snapshot.</p>
-          : campaign.status === "draft" ? <p>Your snapshot has {campaign.shares} tCURR. Rewards will be shown after this round is approved.</p>
-          : campaign.status === "prepared" ? <p>This round is being prepared. Check back for the published reward amount.</p>
-          : BigInt(campaign.amountWei) === 0n ? <p>No reward was allocated to this wallet in this round.</p>
-          : campaign.claimed ? <p><strong>{amount(campaign.amountWei)} uCURR claimed</strong></p>
-          : <><p><strong>{amount(campaign.amountWei)} uCURR available</strong></p><button className="primary-button full-button" disabled={busy || campaign.paused || Date.now() > new Date(campaign.deadline).valueOf()} onClick={() => claim(campaign)}>{campaign.paused ? "Claims paused" : Date.now() > new Date(campaign.deadline).valueOf() ? "Claim period ended" : busy ? "Waiting for MetaMask…" : "Claim uCURR →"}</button></>}
+        <div className="airdrop-round-head"><strong>{campaign.title}</strong><span>{campaign.snapshotAt ? new Date(campaign.snapshotAt).toLocaleString() : "Reward round"}</span></div>
+        {campaign.status === "scheduled" ? <p>Holdings will be recorded at the scheduled time. Check back for your reward.</p>
+          : campaign.status === "failed" ? <p>This round is unavailable.</p>
+          : BigInt(campaign.amountWei) === 0n ? <p>No reward is available to this wallet in this round.</p>
+          : <><p><strong>{amount(campaign.amountWei)} uCURR {campaign.claimed ? "claimed" : campaign.status === "published" ? "available" : "calculated for you"}</strong></p>
+            {campaign.status === "needs_budget" && <p>This round is being prepared.</p>}
+            {campaign.status === "prepared" && <p>Claims will open soon.</p>}
+            {campaign.status === "published" && !campaign.claimed && <button className="primary-button full-button" disabled={busy || !status.profile || campaign.paused || Date.now() > new Date(campaign.deadline).valueOf()} onClick={() => claim(campaign)}>{campaign.paused ? "Claims paused" : Date.now() > new Date(campaign.deadline).valueOf() ? "Claim period ended" : !status.profile ? "Complete your profile to claim" : busy ? "Waiting for MetaMask…" : "Claim uCURR →"}</button>}
+          </>}
       </div>)}
-      {hasHolding && status.identityStatus === "none" && <form className="airdrop-identity-form" onSubmit={submitIdentity}><h3>Identity review for rewards</h3><p>This test review is checked by an admin. It is not formal identity verification.</p><label>Full name<input required maxLength={100} value={fullName} onChange={(event) => setFullName(event.target.value)} /></label><label>Email (optional)<input type="email" maxLength={200} value={email} onChange={(event) => setEmail(event.target.value)} /></label><label>Country code<input required maxLength={2} placeholder="HK" value={country} onChange={(event) => setCountry(event.target.value.toUpperCase())} /></label><label className="airdrop-check"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I confirm this information is mine and agree to its use for this test airdrop review.</label><button className="outline-button" disabled={busy || !consent}>Submit for review</button></form>}
-      {hasHolding && status.identityStatus === "submitted" && <p className="airdrop-review-status">Identity review submitted. The admin will review it before rewards can be published.</p>}
-      {hasHolding && status.identityStatus === "rejected" && <p className="airdrop-review-status">Your identity review needs attention. Please contact the CURR Hub administrator.</p>}
-      {hasHolding && status.identityStatus === "approved" && <p className="airdrop-review-status">Identity review approved for this test.</p>}
+      {hasReward && (!status.profile || editingProfile) && <form className="airdrop-identity-form" onSubmit={saveProfile}><h3>Stakeholder profile</h3><p>Tell us who you are before claiming your reward.</p>
+        <label>Full name<input required maxLength={100} value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
+        <label>Email<input required type="email" maxLength={200} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+        <label>Company (optional)<input maxLength={120} value={company} onChange={(event) => setCompany(event.target.value)} /></label>
+        <label>Role (optional)<input maxLength={100} value={role} onChange={(event) => setRole(event.target.value)} /></label>
+        <label>Country<input required maxLength={80} value={country} onChange={(event) => setCountry(event.target.value)} /></label>
+        <label>Connection to CURR<select value={relationship} onChange={(event) => setRelationship(event.target.value)}><option>Individual holder</option><option>Company representative</option><option>Other</option></select></label>
+        <label className="airdrop-check"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /> I agree to CURR Hub storing this profile with my wallet address to manage rewards and understand its stakeholders.</label>
+        <label className="airdrop-check"><input type="checkbox" checked={marketingOptIn} onChange={(event) => setMarketingOptIn(event.target.checked)} /> Send me optional CURR news and updates by email.</label>
+        <button className="outline-button" disabled={busy || !consent}>Save profile</button>
+      </form>}
+      {status.profile && !editingProfile && <p className="airdrop-review-status">Profile saved for {status.profile.full_name}. You can claim any open reward above. <button className="text-button" onClick={() => { setFullName(status.profile!.full_name); setEmail(status.profile!.email); setCompany(status.profile!.company); setRole(status.profile!.role); setCountry(status.profile!.country); setRelationship(status.profile!.relationship); setMarketingOptIn(status.profile!.marketing_opt_in); setConsent(true); setEditingProfile(true); }}>Edit profile</button></p>}
     </>}
     {error && <p className="swap-message" role="alert">{error}</p>}
-  </section><aside className="feature-aside"><div className="aside-icon">✦</div><h3>How it works</h3><p>We record tCURR holdings at one fixed block. Once a reward round opens, eligible wallets can claim uCURR directly into MetaMask.</p></aside></div>;
+  </section><aside className="feature-aside"><div className="aside-icon">✦</div><h3>How rewards work</h3><p>Your reward is calculated from the tCURR held in your wallet at the round&apos;s snapshot time. Once claims open, connect the same wallet to receive uCURR.</p></aside></div>;
 }
