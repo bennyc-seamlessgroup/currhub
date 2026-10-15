@@ -1,6 +1,6 @@
 import "server-only";
 import { Contract, Interface, JsonRpcProvider, getAddress, id } from "ethers";
-import { TCURR_SEPOLIA_ADDRESS } from "@/lib/tcurr";
+import { TCURR_SEPOLIA_ADDRESS, TCURR_SEPOLIA_DEPLOYMENT_BLOCK } from "@/lib/tcurr";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const transferInterface = new Interface(["event Transfer(address indexed from, address indexed to, uint256 value)"]);
@@ -11,16 +11,7 @@ export function airdropRpc() {
 }
 
 export async function findTCurrDeploymentBlock() {
-  const provider = airdropRpc();
-  let first = 0;
-  let last = await provider.getBlockNumber();
-  if (await provider.getCode(TCURR_SEPOLIA_ADDRESS, last) === "0x") throw new Error("tCURR is not deployed on this network.");
-  while (first < last) {
-    const middle = Math.floor((first + last) / 2);
-    if (await provider.getCode(TCURR_SEPOLIA_ADDRESS, middle) === "0x") first = middle + 1;
-    else last = middle;
-  }
-  return first;
+  return TCURR_SEPOLIA_DEPLOYMENT_BLOCK;
 }
 
 export async function takeTCurrSnapshot(start: number, end: number) {

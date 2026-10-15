@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { BrowserProvider, Contract, ContractFactory, formatUnits } from "ethers";
 import { airdropRequest, signInForAirdrop } from "@/lib/airdrop-client";
-import { UCURR_SEPOLIA_ADDRESS } from "@/lib/tcurr";
+import { TCURR_SEPOLIA_DEPLOYMENT_BLOCK, UCURR_SEPOLIA_ADDRESS } from "@/lib/tcurr";
 import artifacts from "@/lib/test-contract-artifacts.json";
 
 type Injected = { request: (args: { method: string; params?: unknown[] | Record<string, unknown> }) => Promise<unknown>; on?: (event: string, listener: () => void) => void; removeListener?: (event: string, listener: () => void) => void; isMetaMask?: boolean; providers?: Injected[] };
@@ -33,7 +33,7 @@ export default function AdminAirdrop() {
   const [message, setMessage] = useState("");
   const [contractInput, setContractInput] = useState("");
   const [title, setTitle] = useState("uCURR reward round");
-  const [startBlock, setStartBlock] = useState("");
+  const [startBlock, setStartBlock] = useState(String(TCURR_SEPOLIA_DEPLOYMENT_BLOCK));
   const [snapshotBlock, setSnapshotBlock] = useState("");
   const [pool, setPool] = useState("100");
   const [deadline, setDeadline] = useState("");
@@ -153,13 +153,9 @@ export default function AdminAirdrop() {
     catch (error) { setMessage(errorText(error)); }
   }
 
-  async function findStartBlock() {
-    setBusy("find_start"); setMessage("");
-    try {
-      const result = await airdropRequest("/api/admin/airdrop", { action: "find_start" });
-      setStartBlock(String(result.startBlock));
-    } catch (error) { setMessage(errorText(error)); }
-    finally { setBusy(""); }
+  function findStartBlock() {
+    setStartBlock(String(TCURR_SEPOLIA_DEPLOYMENT_BLOCK));
+    setMessage(`tCURR started at block ${TCURR_SEPOLIA_DEPLOYMENT_BLOCK.toLocaleString("en-US")}.`);
   }
 
   async function fund(campaign: Campaign) {

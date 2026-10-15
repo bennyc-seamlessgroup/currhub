@@ -15,6 +15,7 @@ const OWNABLE_READ_ABI = ["function owner() view returns (address)"];
 
 export const SEPOLIA_ID = 11155111n;
 export const TCURR_SEPOLIA_ADDRESS = "0x8a362AC747eB9751e18f7a7D94da2130A7772E2c";
+export const TCURR_SEPOLIA_DEPLOYMENT_BLOCK = 11911366;
 export const UCURR_SEPOLIA_ADDRESS = "0xB7E470175c2f271394c5e5F7348d46A1F5EfCbc1";
 
 export type InjectedEthereum = {
