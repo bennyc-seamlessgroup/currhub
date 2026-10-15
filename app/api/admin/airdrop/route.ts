@@ -1,7 +1,7 @@
 import { Contract, isAddress, parseUnits } from "ethers";
 import { NextRequest, NextResponse } from "next/server";
 import { airdropConfigured, airdropDb } from "@/lib/server/airdrop-db";
-import { isAdmin, sameOrigin, sessionAddress } from "@/lib/server/airdrop-auth";
+import { adminRole, sameOrigin, sessionAddress } from "@/lib/server/airdrop-auth";
 import { airdropRpc, findTCurrDeploymentBlock } from "@/lib/server/airdrop-snapshot";
 import { processDueSnapshot } from "@/lib/server/airdrop-scheduler";
 import { CLAIM_ABI, claimContractAddress, preparedTree, validateClaimContract } from "@/lib/server/airdrop-service";
@@ -21,7 +21,8 @@ async function audit(wallet: string, action: string, subject: string) {
 export async function GET(request: NextRequest) {
   if (!airdropConfigured()) return NextResponse.json({ configured: false, error: "Set up the airdrop database first." }, { status: 503 });
   const admin = sessionAddress(request);
-  if (!isAdmin(admin)) return NextResponse.json({ error: "Admin wallet sign-in required." }, { status: 403 });
+  const role = await adminRole(admin);
+  if (!role) return NextResponse.json({ error: "Admin wallet sign-in required." }, { status: 403 });
   try {
     const db = airdropDb();
     const [{ data: campaigns, error: campaignsError }, { data: profiles, error: profilesError }, contractAddress] = await Promise.all([
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
       ? await db.from("airdrop_allocations").select("wallet,shares,amount_wei").eq("campaign_id", campaignId).order("wallet")
       : { data: [], error: null };
     if (allocationsError) throw allocationsError;
-    return NextResponse.json({ configured: true, contractAddress, campaigns, profiles, allocations }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ configured: true, role, contractAddress, campaigns, profiles, allocations }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return failure(error); }
 }
 
@@ -44,13 +45,15 @@ export async function POST(request: NextRequest) {
   if (!sameOrigin(request)) return NextResponse.json({ error: "Request origin did not match." }, { status: 403 });
   if (!airdropConfigured()) return NextResponse.json({ error: "Airdrop database is not configured." }, { status: 503 });
   const admin = sessionAddress(request);
-  if (!isAdmin(admin) || !admin) return NextResponse.json({ error: "Admin wallet sign-in required." }, { status: 403 });
+  const role = await adminRole(admin);
+  if (!role || !admin) return NextResponse.json({ error: "Admin wallet sign-in required." }, { status: 403 });
   try {
     const body = await request.json() as Record<string, unknown>;
     const db = airdropDb();
     if (body.action === "run_due") return NextResponse.json(await processDueSnapshot());
     if (body.action === "find_start") return NextResponse.json({ startBlock: await findTCurrDeploymentBlock() });
     if (body.action === "set_contract") {
+      if (role !== "owner") return NextResponse.json({ error: "Owner access required." }, { status: 403 });
       if (typeof body.address !== "string" || !isAddress(body.address)) throw new Error("Enter a valid contract address.");
       const existing = await claimContractAddress();
       if (existing && existing.toLowerCase() !== body.address.toLowerCase()) throw new Error("A claim contract is already configured.");
@@ -98,6 +101,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
     if (body.action === "finalize") {
+      if (role !== "owner") return NextResponse.json({ error: "Owner access required." }, { status: 403 });
       if (typeof body.campaignId !== "string") throw new Error("Choose a campaign.");
       const { data: campaign, error: campaignError } = await db.from("airdrop_campaigns").select("*").eq("id", body.campaignId).single();
       if (campaignError || !campaign) throw campaignError || new Error("Campaign was not found.");

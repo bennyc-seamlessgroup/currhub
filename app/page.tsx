@@ -82,7 +82,6 @@ export default function Portal() {
   const [walletMenuOpen, setWalletMenuOpen] = useState(false);
   const walletMenuRef = useRef<HTMLDivElement>(null);
   const restoringRef = useRef(false);
-  const [tokenOwnerWallet, setTokenOwnerWallet] = useState("");
   const [airdropOwnerWallet, setAirdropOwnerWallet] = useState("");
   const tcurrAddress = TCURR_SEPOLIA_ADDRESS;
   const [tcurrBalance, setTcurrBalance] = useState<TCurrBalance | null>(null);
@@ -247,23 +246,16 @@ export default function Portal() {
   }, [selectedEvm, wallets.ethereum?.address, ucurrAddress]);
 
   useEffect(() => {
-    if (!selectedEvm || !wallets.ethereum) { setTokenOwnerWallet(""); setAirdropOwnerWallet(""); return; }
+    if (!selectedEvm || !wallets.ethereum) { setAirdropOwnerWallet(""); return; }
     let active = true;
     const address = wallets.ethereum.address.toLowerCase();
-    setTokenOwnerWallet("");
     setAirdropOwnerWallet("");
-    Promise.allSettled([
-      readTokenOwner(selectedEvm.provider, tcurrAddress),
-      readTokenOwner(selectedEvm.provider, ucurrAddress),
-    ]).then(([tcurrOwner, ucurrOwner]) => {
+    readTokenOwner(selectedEvm.provider, ucurrAddress).then((ucurrOwner) => {
       if (!active) return;
-      const ownsTCurr = tcurrOwner.status === "fulfilled" && tcurrOwner.value.toLowerCase() === address;
-      const ownsUCurr = ucurrOwner.status === "fulfilled" && ucurrOwner.value.toLowerCase() === address;
-      setTokenOwnerWallet(ownsTCurr || ownsUCurr ? address : "");
-      setAirdropOwnerWallet(ownsUCurr ? address : "");
-    });
+      setAirdropOwnerWallet(ucurrOwner.toLowerCase() === address ? address : "");
+    }).catch(() => { if (active) setAirdropOwnerWallet(""); });
     return () => { active = false; };
-  }, [selectedEvm, wallets.ethereum?.address, tcurrAddress, ucurrAddress]);
+  }, [selectedEvm, wallets.ethereum?.address, ucurrAddress]);
 
   function refreshWalletOptions() {
     window.dispatchEvent(new Event("eip6963:requestProvider"));
@@ -389,7 +381,6 @@ export default function Portal() {
   }, [evmOptions, solanaOptions]);
 
   const connected = Boolean(wallets.ethereum || wallets.solana);
-  const isTokenOwner = Boolean(wallets.ethereum && tokenOwnerWallet === wallets.ethereum.address.toLowerCase());
   const isAirdropOwner = Boolean(wallets.ethereum && airdropOwnerWallet === wallets.ethereum.address.toLowerCase());
   const balanceLabel = !wallets.ethereum ? "—" : tcurrLoading ? "Reading…" : tcurrError ? "Unavailable" : tcurrBalance ? displayTokenBalance(tcurrBalance) : "—";
   const utilityBalanceLabel = !wallets.ethereum ? "—" : ucurrLoading ? "Reading…" : ucurrError ? "Unavailable" : ucurrBalance ? displayTokenBalance(ucurrBalance) : "—";
@@ -398,7 +389,7 @@ export default function Portal() {
   return <div className="app-shell">
     <header className="site-header"><div className="header-inner">
       <button className="brand-button" onClick={() => setTab("balance")} aria-label="CURR Hub, wallet balance"><BrandMark /><span>{brand.name}</span></button>
-      <nav className="top-nav" aria-label="Main navigation">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "tab active" : "tab"} onClick={() => { setTab(item.id); setNotice(""); }}>{item.label}</button>)}{isAirdropOwner && <a className="tab" href="/admin">Airdrop admin</a>}</nav>
+      <nav className="top-nav" aria-label="Main navigation">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "tab active" : "tab"} onClick={() => { setTab(item.id); setNotice(""); }}>{item.label}</button>)}{isAirdropOwner && <a className="admin-nav-link" href="/admin">Admin</a>}</nav>
       <div className="header-wallet-menu" ref={walletMenuRef}>
         <button className="header-wallet-button" onClick={() => { if (connected) setWalletMenuOpen((open) => !open); else { refreshWalletOptions(); setPickerOpen(true); } }} disabled={busy} aria-expanded={connected ? walletMenuOpen : undefined} aria-controls={connected ? "wallet-menu" : undefined}>{busy ? "Connecting…" : connected ? <>{shortAddress(wallets.ethereum?.address || wallets.solana!.address)} <span aria-hidden="true">⌄</span></> : "Connect wallet"}</button>
         {connected && walletMenuOpen && <div className="wallet-dropdown" id="wallet-menu"><div className="wallet-dropdown-info"><strong>{wallets.ethereum?.name || wallets.solana?.name}</strong><span>{wallets.ethereum ? "Ethereum Sepolia" : "Solana Devnet"}</span></div><button onClick={() => { setWalletMenuOpen(false); refreshWalletOptions(); setPickerOpen(true); }}>Switch wallet</button><button onClick={disconnectWallet}>Disconnect</button></div>}
@@ -414,8 +405,6 @@ export default function Portal() {
           <section className="balance-card token-card featured"><div className="card-kicker"><span className="token-emblem">t</span> tCURR <span className="card-network">SEPOLIA</span></div><div className={wallets.ethereum && tcurrBalance ? "large-balance" : "large-balance empty-balance"}>{balanceLabel}</div><div className="balance-caption">{wallets.solana ? ethereumOnlyNote : tcurrBalance ? "Your tCURR test token balance" : tcurrError || "Tokenized shares test token"}</div>{wallets.ethereum && tcurrBalance && <button className="import-button" onClick={addTokenToWallet}>Not showing in your wallet? Add tCURR <span aria-hidden="true">↗</span></button>}</section>
           <section className="balance-card token-card utility-card"><div className="card-kicker"><span className="coin-symbol utility-symbol">u</span> uCURR <span className="card-network">SEPOLIA</span></div><div className={wallets.ethereum && ucurrBalance ? "large-balance" : "large-balance empty-balance"}>{utilityBalanceLabel}</div><div className="balance-caption">{wallets.solana ? ethereumOnlyNote : ucurrError || (ucurrBalance ? "Your uCURR test token balance" : "Utility token for future rewards")}</div>{wallets.ethereum && ucurrBalance && <button className="import-button" onClick={addUcurrToWallet}>Not showing in your wallet? Add uCURR <span aria-hidden="true">↗</span></button>}</section>
         </div>
-        {isTokenOwner && <a className="token-guide-link" href="/setup">New to test tokens? Follow the Sepolia ETH and token setup guide <span aria-hidden="true">→</span></a>}
-        {wallets.solana && <a className="token-guide-link" href="/setup?chain=solana">Prepare Solana Devnet test tokens <span aria-hidden="true">→</span></a>}
       </>}
 
       {tab === "swap" && <SwapPanel provider={selectedEvm?.provider || null} wallet={wallets.ethereum?.address || ""} connectedToSolana={Boolean(wallets.solana)} onConnect={() => { refreshWalletOptions(); setPickerOpen(true); }} onSuccess={refreshBalance} />}

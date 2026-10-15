@@ -17,6 +17,8 @@ svg{width:20px;height:20px}
 .tab{display:inline-flex;align-items:center;border:0;background:transparent;border-radius:11px;color:#68778f;padding:13px 16px;font-size:14px;font-weight:700;white-space:nowrap}
 .tab:hover{background:#f3f6fc;color:#243755}
 .tab.active{background:#edf2ff;color:#3e5bd3}
+.admin-nav-link{display:inline-flex;align-items:center;color:#8b98aa;font-size:11px;font-weight:700;padding:8px 9px;margin-left:10px;white-space:nowrap}
+.admin-nav-link:hover{color:#3e5bd3;text-decoration:underline}
 .header-wallet-button{border:1px solid #cbd7f4;background:#fff;color:#3153c9;border-radius:11px;padding:11px 17px;font-size:14px;font-weight:800;white-space:nowrap;min-height:44px}
 .header-wallet-button:hover,.outline-button:hover{background:#f4f7ff}
 .header-wallet-menu{position:relative;flex-shrink:0}
@@ -200,7 +202,15 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .airdrop-check input{margin:3px 0 0;flex-shrink:0}
 .airdrop-review-status{margin:20px 0 0!important;color:#5065af!important;font-size:13px!important}
 .admin-container{max-width:1000px}
+.admin-account{display:grid;gap:3px;text-align:right;color:#8190a5;font-size:12px}
+.admin-account strong{color:#344b70;font-size:13px}
+.admin-sections{display:flex;gap:8px;margin:0 0 22px;padding:5px;width:max-content;max-width:100%;background:#e9eef8;border-radius:14px}
+.admin-section{border:0;border-radius:10px;background:transparent;padding:11px 18px;color:#657690;font-size:13px;font-weight:800;white-space:nowrap}
+.admin-section.active{background:#fff;color:#3e5bd3;box-shadow:0 3px 12px #23345614}
+.embedded-setup{background:transparent}
+.embedded-setup .setup-container{max-width:none;padding:0}
 .admin-stack{display:grid;gap:20px}
+.admin-funding-options{display:flex;gap:10px;flex-wrap:wrap;margin:17px 0}
 .admin-stack .feature-card>p{font-size:14px;color:#76859b;line-height:1.6;margin:12px 0 20px}
 .admin-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 16px;margin:14px 0 20px}
 .admin-setting-row{display:flex;gap:10px;align-items:end;margin-top:17px}
@@ -219,4 +229,4 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .admin-confirm{margin:17px 0!important}
 .admin-publish{display:flex;margin-top:14px}
 .admin-link{color:#435fc6;overflow-wrap:anywhere;font-weight:700}
-@media(max-width:690px){.admin-fields{grid-template-columns:1fr}.admin-setting-row,.admin-list-row{align-items:stretch;flex-direction:column}.admin-row-actions{flex-wrap:wrap}}
+@media(max-width:690px){.admin-fields{grid-template-columns:1fr}.admin-setting-row,.admin-list-row{align-items:stretch;flex-direction:column}.admin-row-actions{flex-wrap:wrap}.admin-sections{width:100%;overflow-x:auto}.admin-section{padding:10px 12px}.admin-account{text-align:left}}

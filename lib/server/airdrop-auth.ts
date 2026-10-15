@@ -2,7 +2,7 @@ import "server-only";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { getAddress, verifyMessage } from "ethers";
 import type { NextRequest } from "next/server";
-import { adminWallets } from "@/lib/server/airdrop-db";
+import { adminWallets, airdropDb } from "@/lib/server/airdrop-db";
 
 export const SESSION_COOKIE = "curr_airdrop_session";
 export const CHALLENGE_COOKIE = "curr_airdrop_challenge";
@@ -69,6 +69,13 @@ export function sessionAddress(request: NextRequest) {
   return unseal(request.cookies.get(SESSION_COOKIE)?.value)?.address ?? null;
 }
 
-export function isAdmin(address: string | null) {
-  return Boolean(address && adminWallets().includes(address.toLowerCase()));
+export type AdminRole = "owner" | "team";
+
+export async function adminRole(address: string | null): Promise<AdminRole | null> {
+  if (!address) return null;
+  const wallet = getAddress(address).toLowerCase();
+  if (adminWallets().includes(wallet)) return "owner";
+  const { data, error } = await airdropDb().from("airdrop_admin_wallets").select("role").eq("wallet", wallet).maybeSingle();
+  if (error) throw error;
+  return data?.role === "owner" || data?.role === "team" ? data.role : null;
 }

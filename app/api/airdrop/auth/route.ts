@@ -1,13 +1,16 @@
 import { isAddress } from "ethers";
 import { NextRequest, NextResponse } from "next/server";
 import { airdropConfigured } from "@/lib/server/airdrop-db";
-import { CHALLENGE_COOKIE, SESSION_COOKIE, cookieOptions, createChallenge, isAdmin, sameOrigin, sessionAddress, verifyChallenge } from "@/lib/server/airdrop-auth";
+import { CHALLENGE_COOKIE, SESSION_COOKIE, adminRole, cookieOptions, createChallenge, sameOrigin, sessionAddress, verifyChallenge } from "@/lib/server/airdrop-auth";
 
 export const runtime = "nodejs";
 
-export function GET(request: NextRequest) {
+export async function GET(request: NextRequest) {
   const address = airdropConfigured() ? sessionAddress(request) : null;
-  return NextResponse.json({ configured: airdropConfigured(), address, admin: isAdmin(address) }, { headers: { "Cache-Control": "no-store" } });
+  try {
+    const role = address ? await adminRole(address) : null;
+    return NextResponse.json({ configured: airdropConfigured(), address, admin: Boolean(role), role }, { headers: { "Cache-Control": "no-store" } });
+  } catch { return NextResponse.json({ error: "Could not check admin access." }, { status: 503 }); }
 }
 
 export async function POST(request: NextRequest) {
@@ -31,7 +34,8 @@ export async function POST(request: NextRequest) {
     if (body.action === "verify" && typeof body.signature === "string" && body.signature.length <= 300) {
       const session = verifyChallenge(request.cookies.get(CHALLENGE_COOKIE)?.value, body.signature, body.address);
       if (!session) return NextResponse.json({ error: "Wallet signature could not be verified. Try again." }, { status: 401 });
-      const response = NextResponse.json({ ok: true, address: body.address, admin: isAdmin(body.address) });
+      const role = await adminRole(body.address);
+      const response = NextResponse.json({ ok: true, address: body.address, admin: Boolean(role), role });
       response.cookies.set(SESSION_COOKIE, session, cookieOptions(43200));
       response.cookies.delete(CHALLENGE_COOKIE);
       return response;
