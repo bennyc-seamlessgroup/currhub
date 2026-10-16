@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatUnits } from "ethers";
 import type { InjectedEthereum } from "@/lib/tcurr";
 import {
   approveForSwap, approveLiquidityWithdrawal, createSwapPool, displayTokenAmount,
@@ -73,15 +74,24 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
     finally { setLoading(false); }
   }
 
+  const live = Boolean(data && data.pool.reserveUCurr > 0n && data.pool.reserveUSDC > 0n);
+  const lowLiquidity = Boolean(live && data && (data.pool.reserveUCurr < 10n ** 18n || data.pool.reserveUSDC < 10n ** 6n));
+  const currentRate = live && data
+    ? Number(formatUnits(data.pool.reserveUSDC, 6)) / Number(formatUnits(data.pool.reserveUCurr, 18))
+    : null;
   let ucurrAmount = 0n;
   let usdcAmount = 0n;
   let amountError = "";
   try {
     ucurrAmount = parseTokenAmount(ucurrInput, "uCURR");
-    usdcAmount = parseTokenAmount(usdcInput, "USDC");
+    // An existing pair fixes the deposit ratio. Round up to a USDC base unit;
+    // the router applies the exact reserve ratio when the transaction executes.
+    usdcAmount = live && data
+      ? (ucurrAmount * data.pool.reserveUSDC + data.pool.reserveUCurr - 1n) / data.pool.reserveUCurr
+      : parseTokenAmount(usdcInput, "USDC");
+    if (usdcAmount <= 0n) throw new Error("Choose a larger uCURR amount for this pool.");
   } catch (error) { amountError = swapError(error); }
 
-  const live = Boolean(data && data.pool.reserveUCurr > 0n && data.pool.reserveUSDC > 0n);
   const insufficientUCurr = Boolean(data && ucurrAmount > data.ucurrBalance);
   const insufficientUSDC = Boolean(data && usdcAmount > data.usdcBalance);
   const nextStep = data && !amountError && !insufficientUCurr && !insufficientUSDC
@@ -92,16 +102,16 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   const withdrawUSDC = data && data.lpSupply > 0n ? data.pool.reserveUSDC * data.lpBalance / data.lpSupply : 0n;
 
   async function proceed() {
-    if (!provider || !wallet || !data || !nextStep || live || busy || smartAccount) return;
+    if (!provider || !wallet || !data || !nextStep || busy || smartAccount) return;
     setBusy(true);
     setMessage("");
     setTxHash("");
     try {
       if (nextStep === "create") {
         const latest = await loadPoolData(provider, wallet);
-        if (latest.pool.reserveUCurr > 0n || latest.pool.reserveUSDC > 0n) {
+        if (latest.pool.reserveUCurr !== data.pool.reserveUCurr || latest.pool.reserveUSDC !== data.pool.reserveUSDC) {
           setData(latest);
-          throw new Error("A pool is already funded. Review its live price before adding more liquidity.");
+          throw new Error("The pool balance changed. Review the updated deposit amounts before continuing.");
         }
         if (latest.ucurrBalance < ucurrAmount || latest.usdcBalance < usdcAmount) throw new Error("Your wallet does not have enough tokens for this deposit.");
         if (latest.ucurrAllowance < ucurrAmount || latest.usdcAllowance < usdcAmount) throw new Error("Approve both token amounts first.");
@@ -115,7 +125,7 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
       setMessage("Waiting for your Sepolia transaction to confirm…");
       await transaction.wait();
       await refresh();
-      setMessage(nextStep === "create" ? "The uCURR/USDC pool is live. Test wallets can now swap." : "Token spending approved. Continue to the next step.");
+      setMessage(nextStep === "create" ? "Liquidity added to the uCURR/USDC pool." : "Token spending approved. Continue to the next step.");
     } catch (error) { setMessage(swapError(error)); }
     finally { setBusy(false); }
   }
@@ -145,25 +155,29 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   }
 
   return <section className="setup-done pool-setup">
-    <div className="setup-stage-head"><span className="setup-step">4</span><div><h2>Start real Sepolia swaps</h2><p>Add uCURR and test USDC to a Uniswap v2 pool. Each approval and the final deposit need your MetaMask confirmation.</p></div></div>
+    <div className="setup-stage-head"><span className="setup-step">4</span><div><h2>Manage swap liquidity</h2><p>Add uCURR and test USDC to the Uniswap v2 pool. Each approval and deposit needs your MetaMask confirmation.</p></div></div>
     {loading && <p>Checking pool and wallet balances…</p>}
     {data && <>
-      <div className="setup-contract"><span>Pool status</span><strong>{live ? "Live" : "Not funded yet"}</strong></div>
+      <div className="setup-contract"><span>Pool status</span><strong>{lowLiquidity ? "Very low liquidity" : live ? "Funded" : "Not funded yet"}</strong></div>
       {data.pool.pair && <div className="setup-contract"><span>Pool contract</span><a href={`https://sepolia.etherscan.io/address/${data.pool.pair}`} target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></div>}
-      {live ? <><p>Pool reserves: {displayTokenAmount(data.pool.reserveUCurr, "uCURR")} uCURR and {displayTokenAmount(data.pool.reserveUSDC, "USDC")} test USDC. The Swap tab now uses live quotes.</p>
+      {live && <><p>Pool reserves: {displayTokenAmount(data.pool.reserveUCurr, "uCURR", 12)} uCURR and {displayTokenAmount(data.pool.reserveUSDC, "USDC")} test USDC. New deposits follow this pool&apos;s current ratio.</p>
+        {currentRate !== null && Number.isFinite(currentRate) && <p>Current pool rate: 1 uCURR ≈ {currentRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} test USDC.</p>}
+        {lowLiquidity && <p className="setup-error">Almost all liquidity has been removed. This remaining ratio may make a new deposit much more expensive than expected. Check the paired USDC amount before approving.</p>}
         {data.lpBalance > 0n && <details className="pool-withdraw"><summary>Manage my pool position</summary><p>Your share is approximately {displayTokenAmount(withdrawUCurr, "uCURR")} uCURR and {displayTokenAmount(withdrawUSDC, "USDC")} test USDC. Removing it may leave the pool without enough tokens for swaps.</p><button className="outline-button" onClick={withdraw} disabled={busy || smartAccount}>{busy ? "Waiting for MetaMask…" : data.lpAllowance < data.lpBalance ? "Authorize pool position" : "Remove all my liquidity"}</button></details>}
-      </> : <>
+      </>}
+      <>
         <div className="pool-deposit-grid">
           <label className="setup-amount">uCURR to add<input type="number" min="0" step="0.01" value={ucurrInput} onChange={(event) => setUCurrInput(event.target.value)} disabled={busy} /><small>In your wallet: {displayTokenAmount(data.ucurrBalance, "uCURR")} uCURR</small></label>
-          <label className="setup-amount">Test USDC to add<input type="number" min="0" step="0.01" value={usdcInput} onChange={(event) => setUsdcInput(event.target.value)} disabled={busy} /><small>In your wallet: {displayTokenAmount(data.usdcBalance, "USDC")} USDC</small></label>
+          <label className="setup-amount">Test USDC to add<input type={live ? "text" : "number"} min={live ? undefined : "0"} step={live ? undefined : "0.01"} value={live ? amountError ? "—" : displayTokenAmount(usdcAmount, "USDC") : usdcInput} onChange={(event) => setUsdcInput(event.target.value)} disabled={busy || live} /><small>{live ? "Set by the current pool ratio · " : ""}In your wallet: {displayTokenAmount(data.usdcBalance, "USDC")} USDC</small></label>
         </div>
-        {!amountError && Number.isFinite(impliedRate) && <p>Starting rate: 1 test USDC = {impliedRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} uCURR. You will receive the pool position in this wallet.</p>}
+        {!live && !amountError && Number.isFinite(impliedRate) && <p>Starting rate: 1 test USDC = {impliedRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} uCURR. You will receive the pool position in this wallet.</p>}
+        {live && <p>You will receive pool position tokens in this wallet. Check the amounts before confirming; the existing pool price may have changed since your last deposit.</p>}
         {(amountError || insufficientUCurr || insufficientUSDC) && <p className="setup-error">{amountError || (insufficientUCurr ? "Not enough uCURR. Mint more above or enter a smaller deposit." : "Not enough test USDC. Enter a smaller deposit.")}</p>}
         <button className="primary-button" disabled={!nextStep || busy || loading || smartAccount} onClick={proceed}>
-          {busy ? "Waiting for MetaMask…" : nextStep === "approve-u" ? "1. Authorize uCURR spending" : nextStep === "approve-c" ? "2. Authorize USDC spending" : "3. Create pool and add liquidity"}
+          {busy ? "Waiting for MetaMask…" : nextStep === "approve-u" ? "1. Authorize uCURR spending" : nextStep === "approve-c" ? "2. Authorize USDC spending" : live ? "3. Add liquidity" : "3. Create pool and add liquidity"}
         </button>
-        <p className="transaction-note">The starting amounts are editable. Keep some uCURR and test USDC in your wallet to try both swap directions. A small pool can move in price quickly.</p>
-      </>}
+        <p className="transaction-note">{live ? "Adding liquidity cannot set a new price for this pair. The pair remains on Uniswap even if you remove your position." : "The starting amounts are editable. Keep some uCURR and test USDC in your wallet to try both swap directions. A small pool can move in price quickly."}</p>
+      </>
       <button className="text-button" disabled={busy || loading} onClick={refresh}>Refresh pool status</button>
     </>}
     {message && <p className="pool-message" role="status">{message}</p>}
