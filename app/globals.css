@@ -189,6 +189,10 @@ h1{font-size:clamp(35px,4.2vw,54px);line-height:1.08;letter-spacing:-.055em;marg
 .pool-withdraw{margin:15px 0 20px;padding:14px 16px;border:1px solid #e4eaf3;border-radius:12px}
 .pool-withdraw summary{cursor:pointer;color:#405fac;font-size:13px;font-weight:800}
 .pool-withdraw p{margin:10px 0 13px!important}
+.pool-reset{margin:18px 0 22px;padding:18px 20px;border:1px solid #d6e1f6;border-radius:14px;background:#f7faff}
+.pool-reset h3{margin:0 0 8px;color:#253959;font-size:15px}
+.pool-reset p{margin:0 0 14px!important;color:#52647d;line-height:1.55;overflow-wrap:anywhere}
+.pool-reset small{display:block;margin-top:10px;color:#6b7d98;line-height:1.5}
 .setup-recipient{margin:18px 0}
 .setup-recipient label{display:block;font-size:13px;font-weight:800;color:#687a97;margin-bottom:8px}
 .setup-disclaimer{color:#8795a9;font-size:12px;line-height:1.5;margin:19px 4px}

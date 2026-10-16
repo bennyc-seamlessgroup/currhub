@@ -7,18 +7,36 @@ export const UNISWAP_V2_FACTORY = "0xF62c03E08ada871A0bEb309762E260a7a6a880E6";
 export const UNISWAP_V2_ROUTER = "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3";
 export type SwapToken = "uCURR" | "USDC";
 export type PoolState = { pair: string | null; reserveUCurr: bigint; reserveUSDC: bigint };
+export type PoolResetState = PoolState & {
+  balanceUCurr: bigint; balanceUSDC: bigint;
+  lpSupply: bigint; burnedLP: bigint; minimumLiquidity: bigint;
+};
+export type PoolResetPlan =
+  | { stage: "transfer"; donation: bigint }
+  | { stage: "sync"; donation: 0n }
+  | { stage: "complete"; donation: 0n }
+  | { stage: "unavailable"; donation: 0n; reason: string };
+
+// uCURR has 18 decimals; test USDC has 6. One USDC base unit needs
+// 10^13 uCURR base units for a price of 10 uCURR per 1 USDC.
+const UCURR_PER_USDC_BASE_UNIT = 10n ** 13n;
+const MAX_RESET_DONATION = parseUnits("0.01", 18);
 
 const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function allowance(address,address) view returns (uint256)",
   "function approve(address,uint256) returns (bool)",
+  "function transfer(address,uint256) returns (bool)",
 ];
 const FACTORY_ABI = ["function getPair(address,address) view returns (address)"];
 const PAIR_ABI = [
   "function token0() view returns (address)",
+  "function token1() view returns (address)",
   "function getReserves() view returns (uint112 reserve0,uint112 reserve1,uint32 blockTimestampLast)",
   "function balanceOf(address) view returns (uint256)",
   "function totalSupply() view returns (uint256)",
+  "function MINIMUM_LIQUIDITY() view returns (uint256)",
+  "function sync()",
   "function allowance(address,address) view returns (uint256)",
   "function approve(address,uint256) returns (bool)",
 ];
@@ -86,6 +104,81 @@ export async function readPoolFromProvider(provider: Provider): Promise<PoolStat
     reserveUCurr: ucurrFirst ? reserves[0] : reserves[1],
     reserveUSDC: ucurrFirst ? reserves[1] : reserves[0],
   };
+}
+
+export async function readPoolResetState(injected: InjectedEthereum): Promise<PoolResetState | null> {
+  const provider = await sepoliaProvider(injected);
+  const pool = await readPoolFromProvider(provider);
+  if (!pool.pair) return null;
+  const blockTag = await provider.getBlockNumber();
+  const pair = new Contract(pool.pair, PAIR_ABI, provider);
+  const ucurr = new Contract(UCURR_SEPOLIA_ADDRESS, ERC20_ABI, provider);
+  const usdc = new Contract(SEPOLIA_USDC_ADDRESS, ERC20_ABI, provider);
+  const atBlock = { blockTag };
+  const [token0, token1, reserves, balanceUCurr, balanceUSDC, lpSupply, burnedLP, minimumLiquidity] = await Promise.all([
+    pair.token0(atBlock) as Promise<string>,
+    pair.token1(atBlock) as Promise<string>,
+    pair.getReserves(atBlock) as Promise<[bigint, bigint, bigint]>,
+    ucurr.balanceOf(pool.pair, atBlock) as Promise<bigint>,
+    usdc.balanceOf(pool.pair, atBlock) as Promise<bigint>,
+    pair.totalSupply(atBlock) as Promise<bigint>,
+    pair.balanceOf(ZeroAddress, atBlock) as Promise<bigint>,
+    pair.MINIMUM_LIQUIDITY(atBlock) as Promise<bigint>,
+  ]);
+  const ucurrFirst = token0.toLowerCase() === UCURR_SEPOLIA_ADDRESS.toLowerCase();
+  if (ucurrFirst ? token1.toLowerCase() !== SEPOLIA_USDC_ADDRESS.toLowerCase()
+    : token0.toLowerCase() !== SEPOLIA_USDC_ADDRESS.toLowerCase() || token1.toLowerCase() !== UCURR_SEPOLIA_ADDRESS.toLowerCase()) {
+    throw new Error("Pool tokens do not match the configured uCURR and USDC addresses.");
+  }
+  return {
+    pair: pool.pair,
+    reserveUCurr: ucurrFirst ? reserves[0] : reserves[1],
+    reserveUSDC: ucurrFirst ? reserves[1] : reserves[0],
+    balanceUCurr, balanceUSDC, lpSupply, burnedLP, minimumLiquidity,
+  };
+}
+
+export function assessPoolReset(state: PoolResetState | null): PoolResetPlan {
+  if (!state?.pair || state.reserveUCurr <= 0n || state.reserveUSDC <= 0n) {
+    return { stage: "unavailable", donation: 0n, reason: "The pool has no reserves to reset." };
+  }
+  const targetUCurr = state.reserveUSDC * UCURR_PER_USDC_BASE_UNIT;
+  if (state.balanceUCurr === state.reserveUCurr && state.balanceUSDC === state.reserveUSDC && state.reserveUCurr === targetUCurr) {
+    return { stage: "complete", donation: 0n };
+  }
+  if (state.minimumLiquidity !== 1000n || state.lpSupply !== state.minimumLiquidity || state.burnedLP !== state.lpSupply) {
+    return { stage: "unavailable", donation: 0n, reason: "Withdraw all wallet-owned pool liquidity before resetting the ratio." };
+  }
+  if (state.reserveUSDC > 1000n || state.reserveUCurr > MAX_RESET_DONATION) {
+    return { stage: "unavailable", donation: 0n, reason: "The remaining pool balance is too large for this guarded reset." };
+  }
+  if (state.balanceUSDC !== state.reserveUSDC || state.reserveUCurr >= targetUCurr) {
+    return { stage: "unavailable", donation: 0n, reason: "The pool changed or already exceeds the target ratio. Review it before continuing." };
+  }
+  const donation = targetUCurr - state.reserveUCurr;
+  if (donation > MAX_RESET_DONATION) {
+    return { stage: "unavailable", donation: 0n, reason: "The required uCURR amount exceeds the reset safety limit." };
+  }
+  if (state.balanceUCurr === state.reserveUCurr) return { stage: "transfer", donation };
+  if (state.balanceUCurr === targetUCurr) return { stage: "sync", donation: 0n };
+  return { stage: "unavailable", donation: 0n, reason: "The pool token balance changed. Review it before continuing." };
+}
+
+export function samePoolResetState(a: PoolResetState, b: PoolResetState): boolean {
+  return a.pair?.toLowerCase() === b.pair?.toLowerCase()
+    && a.reserveUCurr === b.reserveUCurr && a.reserveUSDC === b.reserveUSDC
+    && a.balanceUCurr === b.balanceUCurr && a.balanceUSDC === b.balanceUSDC
+    && a.lpSupply === b.lpSupply && a.burnedLP === b.burnedLP && a.minimumLiquidity === b.minimumLiquidity;
+}
+
+export async function transferPoolResetUCurr(injected: InjectedEthereum, wallet: string, pair: string, amount: bigint) {
+  const signer = await swapSigner(injected, wallet);
+  return new Contract(UCURR_SEPOLIA_ADDRESS, ERC20_ABI, signer).transfer(getAddress(pair), amount);
+}
+
+export async function syncPoolReset(injected: InjectedEthereum, wallet: string, pair: string) {
+  const signer = await swapSigner(injected, wallet);
+  return new Contract(getAddress(pair), PAIR_ABI, signer).sync();
 }
 
 export async function readSwapBalance(injected: InjectedEthereum, wallet: string, token: SwapToken): Promise<bigint> {
