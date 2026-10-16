@@ -37,6 +37,7 @@ export default function SolanaSetup() {
   const [usdc, setUsdc] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [messagePlace, setMessagePlace] = useState<"wallet" | "usdc">("wallet");
 
   useEffect(() => {
     const saved = readWalletSession();
@@ -61,6 +62,7 @@ export default function SolanaSetup() {
   }
 
   async function connect() {
+    setMessagePlace("wallet");
     const phantom = window.phantom?.solana || (window.solana?.isPhantom ? window.solana : undefined);
     if (!phantom) { setMessage("Open this page in a browser with Phantom installed, then try again."); return; }
     setBusy(true);
@@ -78,12 +80,14 @@ export default function SolanaSetup() {
   }
 
   async function copyAddress() {
+    setMessagePlace("wallet");
     try { await navigator.clipboard.writeText(wallet); setMessage("Solana wallet address copied."); }
     catch { setMessage("Copy your public Solana address from Phantom."); }
   }
 
-  async function refreshCurrent() {
+  async function refreshCurrent(place: "wallet" | "usdc") {
     if (!wallet) return;
+    setMessagePlace(place);
     setBusy(true);
     setMessage("");
     try { await refresh(wallet); }
@@ -95,22 +99,23 @@ export default function SolanaSetup() {
     <section className="setup-intro"><span className="setup-step">1</span><div>
       <h2>Connect Phantom and get Devnet SOL</h2>
       <p>In Phantom, open Settings → Developer Settings, turn on Testnet Mode, and choose <strong>Solana Devnet</strong>. Connect your Solana wallet below, then use its public address at Solana&apos;s Devnet faucet. Devnet SOL pays test transaction fees.</p>
-      {wallet ? <div className="setup-wallet"><strong>{wallet.slice(0, 6)}…{wallet.slice(-4)}</strong><span>{sol ?? "Reading…"} Devnet SOL</span><button className="text-button" onClick={copyAddress}>Copy address</button><button className="text-button" onClick={refreshCurrent} disabled={busy}>Refresh balances</button><button className="text-button" onClick={connect} disabled={busy}>Reconnect Phantom</button></div> : <button className="primary-button" onClick={connect} disabled={busy}>{busy ? "Connecting…" : "Connect Phantom"}</button>}
+      {wallet ? <div className="setup-wallet"><strong>{wallet.slice(0, 6)}…{wallet.slice(-4)}</strong><span>{sol ?? "Reading…"} Devnet SOL</span><button className="text-button" onClick={copyAddress}>Copy address</button><button className="text-button" onClick={() => refreshCurrent("wallet")} disabled={busy}>Refresh balances</button><button className="text-button" onClick={connect} disabled={busy}>Reconnect Phantom</button></div> : <button className="primary-button" onClick={connect} disabled={busy}>{busy ? "Connecting…" : "Connect Phantom"}</button>}
       <div className="setup-links"><a className="setup-link" href="https://faucet.solana.com/" target="_blank" rel="noopener noreferrer">Get Devnet SOL ↗</a><a className="text-button" href="https://help.phantom.com/articles/use-testnets-in-phantom-5997313271699" target="_blank" rel="noopener noreferrer">How to turn on Phantom testnet mode ↗</a></div>
-      {message && <p className="pool-message" role="status">{message}</p>}
+      {message && messagePlace === "wallet" && <p className="pool-message" role="status">{message}</p>}
     </div></section>
     <section className="setup-intro"><span className="setup-step">2</span><div>
-      <h2>Create Solana tCURR and uCURR</h2>
-      <p>Solana needs its own tCURR and uCURR token mint addresses; the Ethereum contracts cannot be used here. The planned setup will create Devnet mints controlled by your Phantom wallet, mint test balances, and save the public mint addresses for this portal.</p>
-      <p className="setup-pending">This step is not live yet. Solana&apos;s guide below uses a separate Playground wallet by default. The Ethereum tCURR transfer approval rule also needs a Solana program before it can work here.</p>
-      <a className="setup-link" href="https://solana.com/docs/tokens/quickstart" target="_blank" rel="noopener noreferrer">Read Solana&apos;s token setup guide ↗</a>
-    </div></section>
-    <section className="setup-intro"><span className="setup-step">3</span><div>
       <h2>Get Solana Devnet test USDC</h2>
       <p>At Circle&apos;s faucet, choose <strong>USDC</strong> and <strong>Solana Devnet</strong>. Paste the public Solana address from Phantom. Test USDC on Solana is separate from the Sepolia test USDC in MetaMask.</p>
       <a className="setup-link" href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer">Open Circle testnet faucet ↗</a>
       <div className="setup-contract"><span>Solana Devnet USDC mint</span><a href={`https://explorer.solana.com/address/${SOLANA_USDC_MINT}?cluster=devnet`} target="_blank" rel="noopener noreferrer">{SOLANA_USDC_MINT.slice(0, 6)}…{SOLANA_USDC_MINT.slice(-4)} ↗</a></div>
-      {wallet && <div className="setup-wallet setup-usdc-balance"><span>Your Devnet test USDC</span><strong>{usdc ?? "Reading…"} USDC</strong><button className="text-button" onClick={refreshCurrent} disabled={busy}>{busy ? "Reading…" : "Refresh balance"}</button></div>}
+      {wallet && <div className="setup-wallet setup-usdc-balance"><span>Your Devnet test USDC</span><strong>{usdc ?? "Reading…"} USDC</strong><button className="text-button" onClick={() => refreshCurrent("usdc")} disabled={busy}>{busy ? "Reading…" : "Refresh balance"}</button></div>}
+      {message && messagePlace === "usdc" && <p className="pool-message" role="status">{message}</p>}
+    </div></section>
+    <section className="setup-intro"><span className="setup-step">3</span><div>
+      <h2>Create Solana tCURR and uCURR</h2>
+      <p>Solana needs its own tCURR and uCURR token mint addresses; the Ethereum contracts cannot be used here. The planned setup will create Devnet mints controlled by your Phantom wallet, mint test balances, and save the public mint addresses for this portal.</p>
+      <p className="setup-pending">This step is not live yet. Solana&apos;s guide below uses a separate Playground wallet by default. The Ethereum tCURR transfer approval rule also needs a Solana program before it can work here.</p>
+      <a className="setup-link" href="https://solana.com/docs/tokens/quickstart" target="_blank" rel="noopener noreferrer">Read Solana&apos;s token setup guide ↗</a>
     </div></section>
     <section className="setup-intro"><span className="setup-step">4</span><div>
       <h2>Start Solana swaps</h2>

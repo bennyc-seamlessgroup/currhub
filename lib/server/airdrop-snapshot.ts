@@ -10,6 +10,12 @@ export function airdropRpc() {
   return new JsonRpcProvider(process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com", 11155111, { staticNetwork: true });
 }
 
+// Snapshot calculations need old Transfer logs and historical token state.
+// The general-purpose public RPC may prune these even while live reads work.
+export function airdropHistoryRpc() {
+  return new JsonRpcProvider(process.env.AIRDROP_HISTORY_RPC_URL || "https://sepolia.gateway.tenderly.co", 11155111, { staticNetwork: true });
+}
+
 export async function findTCurrDeploymentBlock() {
   return TCURR_SEPOLIA_DEPLOYMENT_BLOCK;
 }
@@ -18,7 +24,8 @@ export async function takeTCurrSnapshot(start: number, end: number) {
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end - start > 50000) {
     throw new Error("Choose a valid snapshot range of at most 50,000 blocks.");
   }
-  const provider = airdropRpc();
+  const provider = airdropHistoryRpc();
+  if (BigInt(await provider.send("eth_chainId", [])) !== 11155111n) throw new Error("Snapshot history RPC must use Ethereum Sepolia.");
   const latest = await provider.getBlockNumber();
   if (end > latest - 6) throw new Error("Choose a snapshot block at least six blocks behind the chain tip.");
   const [before, atBlock, block] = await Promise.all([

@@ -1,7 +1,7 @@
 import "server-only";
 import { Contract, Interface, JsonRpcProvider, getAddress, id } from "ethers";
 import { airdropDb } from "@/lib/server/airdrop-db";
-import { airdropRpc } from "@/lib/server/airdrop-snapshot";
+import { airdropHistoryRpc } from "@/lib/server/airdrop-snapshot";
 import { buildClaimTree, calculateRatioRewards } from "@/lib/airdrop-chain.mjs";
 import { TCURR_SEPOLIA_ADDRESS, TCURR_SEPOLIA_DEPLOYMENT_BLOCK } from "@/lib/tcurr";
 
@@ -59,8 +59,9 @@ export async function processDueSnapshot() {
   if (error) throw error;
   const round = due?.[0] as ScheduledRound | undefined;
   if (!round) return { state: "nothing_due" };
-  const provider = airdropRpc();
+  const provider = airdropHistoryRpc();
   try {
+    if (BigInt(await provider.send("eth_chainId", [])) !== 11155111n) throw new Error("Snapshot history RPC must use Ethereum Sepolia.");
     let target = round.snapshot_block;
     let hash = round.snapshot_hash;
     let cursor = round.snapshot_cursor_block;
@@ -104,7 +105,10 @@ export async function processDueSnapshot() {
     if (finishError) throw finishError;
     return { state, roundId: round.id, holders: holders.length, allocationWei: total.toString() };
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message.slice(0, 500) : "Snapshot failed.";
+    const original = cause instanceof Error ? cause.message : "Snapshot failed.";
+    const message = /pruned history|historical state.*not available|code.?4444/i.test(original)
+      ? "The snapshot RPC could not read older tCURR history. Set AIRDROP_HISTORY_RPC_URL to a Sepolia endpoint with historical logs and state, then retry this scan."
+      : original.slice(0, 500);
     await db.from("airdrop_campaigns").update({ snapshot_error: message }).eq("id", round.id).eq("status", "scheduled");
     throw cause;
   }

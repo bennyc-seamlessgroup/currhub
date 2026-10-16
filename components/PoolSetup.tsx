@@ -29,6 +29,8 @@ type PoolData = {
   lpAllowance: bigint;
   reset: PoolResetState | null;
 };
+type PoolAction = "add" | "remove" | "reset";
+type ActionFeedback = { text: string; txHash?: string; error?: boolean };
 
 async function loadPoolData(provider: InjectedEthereum, wallet: string): Promise<PoolData> {
   const [pool, reset, ucurrBalance, usdcBalance, ucurrAllowance, usdcAllowance] = await Promise.all([
@@ -55,17 +57,29 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   const [usdcInput, setUsdcInput] = useState("4");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [txHash, setTxHash] = useState("");
+  const [activeAction, setActiveAction] = useState<PoolAction>("add");
+  const [feedback, setFeedback] = useState<Partial<Record<PoolAction | "status", ActionFeedback>>>({});
+
+  function report(action: PoolAction | "status", text: string, error = false, txHash?: string) {
+    setFeedback((current) => ({ ...current, [action]: { text, error, txHash: txHash || current[action]?.txHash } }));
+  }
+  function clear(action: PoolAction | "status") {
+    setFeedback((current) => ({ ...current, [action]: undefined }));
+  }
+  function note(action: PoolAction | "status") {
+    const item = feedback[action];
+    return item && <><p className={item.error ? "setup-error" : "pool-message"} role={item.error ? "alert" : "status"}>{item.text}</p>{item.txHash && <p className="setup-tx">Transaction: <a href={`https://sepolia.etherscan.io/tx/${item.txHash}`} target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></p>}</>;
+  }
 
   useEffect(() => {
     if (!provider || !wallet) { setData(null); setLoading(false); return; }
     let active = true;
     setData(null);
     setLoading(true);
+    clear("status");
     loadPoolData(provider, wallet)
       .then((result) => { if (active) setData(result); })
-      .catch((error) => { if (active) setMessage(swapError(error)); })
+      .catch((error) => { if (active) report("status", swapError(error), true); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [provider, wallet, refreshKey]);
@@ -73,8 +87,9 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   async function refresh() {
     if (!provider || !wallet) return;
     setLoading(true);
+    clear("status");
     try { setData(await loadPoolData(provider, wallet)); }
-    catch (error) { setMessage(swapError(error)); }
+    catch (error) { report("status", swapError(error), true); }
     finally { setLoading(false); }
   }
 
@@ -83,6 +98,9 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   const resetPlan = assessPoolReset(data?.reset || null);
   const resetPending = resetPlan.stage === "transfer" || resetPlan.stage === "sync";
   const resetBlocksDeposit = lowLiquidity && resetPlan.stage !== "complete";
+  useEffect(() => {
+    if (lowLiquidity && resetPending) setActiveAction("reset");
+  }, [lowLiquidity, resetPending]);
   const currentRate = live && data
     ? Number(formatUnits(data.pool.reserveUSDC, 6)) / Number(formatUnits(data.pool.reserveUCurr, 18))
     : null;
@@ -111,8 +129,7 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
   async function proceed() {
     if (!provider || !wallet || !data || !nextStep || busy || smartAccount || resetBlocksDeposit) return;
     setBusy(true);
-    setMessage("");
-    setTxHash("");
+    clear("add");
     try {
       if (nextStep === "create") {
         const latest = await loadPoolData(provider, wallet);
@@ -128,20 +145,18 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
         : nextStep === "approve-c"
           ? await approveForSwap(provider, wallet, "USDC", usdcAmount)
           : await createSwapPool(provider, wallet, ucurrAmount, usdcAmount);
-      setTxHash(transaction.hash);
-      setMessage("Waiting for your Sepolia transaction to confirm…");
+      report("add", "Waiting for Sepolia confirmation…", false, transaction.hash);
       await transaction.wait();
       await refresh();
-      setMessage(nextStep === "create" ? "Liquidity added to the uCURR/USDC pool." : "Token spending approved. Continue to the next step.");
-    } catch (error) { setMessage(swapError(error)); }
+      report("add", nextStep === "create" ? "Liquidity added to the uCURR/USDC pool." : nextStep === "approve-u" ? "Step 1 complete. Step 2, approve test USDC, is ready below." : "Step 2 complete. Step 3, add liquidity, is ready below.");
+    } catch (error) { report("add", swapError(error), true); }
     finally { setBusy(false); }
   }
 
   async function withdraw() {
     if (!provider || !wallet || !data?.pool.pair || data.lpBalance <= 0n || busy || smartAccount) return;
     setBusy(true);
-    setMessage("");
-    setTxHash("");
+    clear("remove");
     try {
       const latest = await loadPoolData(provider, wallet);
       if (!latest.pool.pair || latest.lpBalance <= 0n || latest.lpSupply <= 0n) throw new Error("No pool position remains in this wallet.");
@@ -152,20 +167,18 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
       const transaction = needsApproval
         ? await approveLiquidityWithdrawal(provider, wallet, latest.pool.pair, latest.lpBalance)
         : await removeLiquidity(provider, wallet, latest.lpBalance, minimumAfterSlippage(estimatedUCurr), minimumAfterSlippage(estimatedUSDC));
-      setTxHash(transaction.hash);
-      setMessage("Waiting for your Sepolia transaction to confirm…");
+      report("remove", "Waiting for Sepolia confirmation…", false, transaction.hash);
       await transaction.wait();
       await refresh();
-      setMessage(needsApproval ? "Pool position approved. Click again to remove your liquidity." : "Your liquidity has been returned to this wallet.");
-    } catch (error) { setMessage(swapError(error)); }
+      report("remove", needsApproval ? "Step 1 complete. Step 2, remove liquidity, is ready below." : "Your liquidity has been returned to this wallet.");
+    } catch (error) { report("remove", swapError(error), true); }
     finally { setBusy(false); }
   }
 
   async function resetRatio() {
     if (!provider || !wallet || !data?.reset?.pair || !resetPending || busy || smartAccount) return;
     setBusy(true);
-    setMessage("");
-    setTxHash("");
+    clear("reset");
     try {
       const owner = await readTokenOwner(provider, UCURR_SEPOLIA_ADDRESS);
       if (owner.toLowerCase() !== wallet.toLowerCase()) throw new Error("Connect the uCURR owner wallet to reset the pool ratio.");
@@ -185,8 +198,7 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
       const transaction = latestPlan.stage === "transfer"
         ? await transferPoolResetUCurr(provider, wallet, latest.pair!, latestPlan.donation)
         : await syncPoolReset(provider, wallet, latest.pair!);
-      setTxHash(transaction.hash);
-      setMessage("Waiting for your Sepolia transaction to confirm…");
+      report("reset", "Waiting for Sepolia confirmation…", false, transaction.hash);
       await transaction.wait();
       const updated = await loadPoolData(provider, wallet);
       setData(updated);
@@ -197,48 +209,80 @@ export default function PoolSetup({ provider, wallet, smartAccount, refreshKey }
       if (latestPlan.stage === "sync" && updatedPlan.stage !== "complete") {
         throw new Error("The pool update confirmed, but the target ratio was not verified. Review the live balances.");
       }
-      setMessage(latestPlan.stage === "transfer"
+      report("reset", latestPlan.stage === "transfer"
         ? "The small uCURR transfer is confirmed. Update the pool price with the next button."
         : "Pool ratio updated to 10 uCURR per 1 test USDC. You can add liquidity below.");
-    } catch (error) { setMessage(swapError(error)); }
+    } catch (error) { report("reset", swapError(error), true); }
     finally { setBusy(false); }
   }
 
+  const approvedUCurr = Boolean(data && !amountError && ucurrAmount > 0n && data.ucurrAllowance >= ucurrAmount);
+  const approvedUSDC = Boolean(data && !amountError && usdcAmount > 0n && data.usdcAllowance >= usdcAmount);
+
   return <section className="setup-done pool-setup">
-    <div className="setup-stage-head"><span className="setup-step">4</span><div><h2>Manage swap liquidity</h2><p>Add uCURR and test USDC to the Uniswap v2 pool. Each approval and deposit needs your MetaMask confirmation.</p></div></div>
+    <div className="setup-stage-head"><span className="setup-step">4</span><div><h2>Manage swap liquidity</h2><p>Choose what you want to do with the uCURR and test USDC pool.</p></div></div>
     {loading && <p>Checking pool and wallet balances…</p>}
     {data && <>
       <div className="setup-contract"><span>Pool status</span><strong>{lowLiquidity ? "Very low liquidity" : live ? "Funded" : "Not funded yet"}</strong></div>
-      {data.pool.pair && <div className="setup-contract"><span>Pool contract</span><a href={`https://sepolia.etherscan.io/address/${data.pool.pair}`} target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></div>}
-      {live && <><p>Pool reserves: {displayTokenAmount(data.pool.reserveUCurr, "uCURR", 12)} uCURR and {displayTokenAmount(data.pool.reserveUSDC, "USDC")} test USDC. New deposits follow this pool&apos;s current ratio.</p>
-        {currentRate !== null && Number.isFinite(currentRate) && <p>Current pool rate: 1 uCURR ≈ {currentRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} test USDC.</p>}
-        {lowLiquidity && <p className="setup-error">Almost all liquidity has been removed. This remaining ratio may make a new deposit much more expensive than expected. Check the paired USDC amount before approving.</p>}
-        {data.lpBalance > 0n && <details className="pool-withdraw"><summary>Manage my pool position</summary><p>Your share is approximately {displayTokenAmount(withdrawUCurr, "uCURR")} uCURR and {displayTokenAmount(withdrawUSDC, "USDC")} test USDC. Removing it may leave the pool without enough tokens for swaps.</p><button className="outline-button" onClick={withdraw} disabled={busy || smartAccount}>{busy ? "Waiting for MetaMask…" : data.lpAllowance < data.lpBalance ? "Authorize pool position" : "Remove all my liquidity"}</button></details>}
-      </>}
-      {lowLiquidity && <div className="pool-reset">
-        <h3>Set the pool to 10 uCURR = 1 test USDC</h3>
-        {resetPlan.stage === "transfer" && <><p>The pool holds only locked minimum liquidity. Send exactly {formatUnits(resetPlan.donation, 18)} uCURR to the pool, then update its reserves. This small amount stays in the pool.</p><button className="outline-button" onClick={resetRatio} disabled={busy || loading || smartAccount}>{busy ? "Waiting for MetaMask…" : "1. Send small uCURR amount"}</button></>}
-        {resetPlan.stage === "sync" && <><p>The small uCURR transfer is in the pool. Confirm one more transaction to update its displayed ratio before adding liquidity.</p><button className="outline-button" onClick={resetRatio} disabled={busy || loading || smartAccount}>{busy ? "Waiting for MetaMask…" : "2. Update pool price"}</button></>}
-        {resetPlan.stage === "complete" && <p>The current pool ratio is 10 uCURR per 1 test USDC. You can add liquidity below.</p>}
-        {resetPlan.stage === "unavailable" && <p>{resetPlan.reason}</p>}
-        {resetPending && <small>Confirm each step in MetaMask. The pool is public, so recheck the balances if either step is interrupted.</small>}
-      </div>}
-      <>
+      {data.pool.pair && <div className="setup-contract"><span>Pool contract</span><a href={"https://sepolia.etherscan.io/address/" + data.pool.pair} target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></div>}
+      {live && <p>Pool holds {displayTokenAmount(data.pool.reserveUCurr, "uCURR", 12)} uCURR and {displayTokenAmount(data.pool.reserveUSDC, "USDC")} test USDC. {currentRate !== null && Number.isFinite(currentRate) && <>1 uCURR ≈ {currentRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} test USDC.</>}</p>}
+      <div className="pool-action-tabs" aria-label="Liquidity actions">
+        <button type="button" aria-pressed={activeAction === "add"} className={activeAction === "add" ? "active" : ""} onClick={() => setActiveAction("add")}>＋ Add liquidity</button>
+        <button type="button" aria-pressed={activeAction === "remove"} className={activeAction === "remove" ? "active" : ""} onClick={() => setActiveAction("remove")}>↙ Remove liquidity</button>
+        <button type="button" aria-pressed={activeAction === "reset"} className={activeAction === "reset" ? "active" : ""} onClick={() => setActiveAction("reset")}>↺ Reset ratio</button>
+      </div>
+      {activeAction === "add" && <div className="pool-action-panel">
+        <h3>Add liquidity</h3>
+        {resetBlocksDeposit && <p className="setup-error">The remaining pool ratio needs attention before adding liquidity. Open Reset ratio above to review the next step.</p>}
         <div className="pool-deposit-grid">
           <label className="setup-amount">uCURR to add<input type="number" min="0" step="0.01" value={ucurrInput} onChange={(event) => setUCurrInput(event.target.value)} disabled={busy} /><small>In your wallet: {displayTokenAmount(data.ucurrBalance, "uCURR")} uCURR</small></label>
           <label className="setup-amount">Test USDC to add<input type={live ? "text" : "number"} min={live ? undefined : "0"} step={live ? undefined : "0.01"} value={live ? amountError ? "—" : displayTokenAmount(usdcAmount, "USDC") : usdcInput} onChange={(event) => setUsdcInput(event.target.value)} disabled={busy || live} /><small>{live ? "Set by the current pool ratio · " : ""}In your wallet: {displayTokenAmount(data.usdcBalance, "USDC")} USDC</small></label>
         </div>
-        {!live && !amountError && Number.isFinite(impliedRate) && <p>Starting rate: 1 test USDC = {impliedRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} uCURR. You will receive the pool position in this wallet.</p>}
-        {live && <p>You will receive pool position tokens in this wallet. Check the amounts before confirming; the existing pool price may have changed since your last deposit.</p>}
+        {!live && !amountError && Number.isFinite(impliedRate) && <p>Starting rate: 1 test USDC = {impliedRate.toLocaleString("en-US", { maximumFractionDigits: 6 })} uCURR.</p>}
         {(amountError || insufficientUCurr || insufficientUSDC) && <p className="setup-error">{amountError || (insufficientUCurr ? "Not enough uCURR. Mint more above or enter a smaller deposit." : "Not enough test USDC. Enter a smaller deposit.")}</p>}
-        <button className="primary-button" disabled={!nextStep || busy || loading || smartAccount || resetBlocksDeposit} onClick={proceed}>
-          {busy ? "Waiting for MetaMask…" : nextStep === "approve-u" ? "1. Authorize uCURR spending" : nextStep === "approve-c" ? "2. Authorize USDC spending" : live ? "3. Add liquidity" : "3. Create pool and add liquidity"}
-        </button>
-        <p className="transaction-note">{resetBlocksDeposit ? "Complete or review the ratio reset above before adding liquidity." : live ? "Adding liquidity follows the current pool ratio. Swaps can change the price at any time." : "The starting amounts are editable. Keep some uCURR and test USDC in your wallet to try both swap directions. A small pool can move in price quickly."}</p>
-      </>
+        <div className="pool-step-list">
+          <div className={nextStep === "approve-u" ? "pool-step current" : "pool-step"}>
+            <span>1</span><div><strong>Approve uCURR</strong><small>{approvedUCurr ? "Approved for this amount" : "Confirm token spending in MetaMask"}</small></div>
+            <button className="outline-button" disabled={nextStep !== "approve-u" || busy || loading || smartAccount || resetBlocksDeposit} onClick={proceed}>{approvedUCurr ? "✓ Approved" : busy && nextStep === "approve-u" ? "Waiting…" : "Approve uCURR"}</button>
+          </div>
+          <div className={nextStep === "approve-c" ? "pool-step current" : "pool-step"}>
+            <span>2</span><div><strong>Approve test USDC</strong><small>{approvedUSDC ? "Approved for this amount" : "Confirm token spending in MetaMask"}</small></div>
+            <button className="outline-button" disabled={nextStep !== "approve-c" || busy || loading || smartAccount || resetBlocksDeposit} onClick={proceed}>{approvedUSDC ? "✓ Approved" : busy && nextStep === "approve-c" ? "Waiting…" : "Approve USDC"}</button>
+          </div>
+          <div className={nextStep === "create" ? "pool-step current" : "pool-step"}>
+            <span>3</span><div><strong>{live ? "Add to pool" : "Create pool"}</strong><small>Review both amounts and confirm in MetaMask</small></div>
+            <button className="primary-button" disabled={nextStep !== "create" || busy || loading || smartAccount || resetBlocksDeposit} onClick={proceed}>{busy && nextStep === "create" ? "Waiting…" : live ? "Add liquidity" : "Create pool"}</button>
+          </div>
+        </div>
+        <p className="transaction-note">Adding liquidity follows the current pool ratio. Swaps can change the price at any time.</p>
+        {note("add")}
+      </div>}
+      {activeAction === "remove" && <div className="pool-action-panel">
+        <h3>Remove liquidity</h3>
+        {data.lpBalance <= 0n ? <p>This wallet has no removable pool position. The pool can still exist because its minimum liquidity is permanently locked.</p> : <>
+          <p>Your position represents about {displayTokenAmount(withdrawUCurr, "uCURR")} uCURR and {displayTokenAmount(withdrawUSDC, "USDC")} test USDC.</p>
+          <div className="pool-step-list">
+            <div className={data.lpAllowance < data.lpBalance ? "pool-step current" : "pool-step"}><span>1</span><div><strong>Authorize pool position</strong><small>{data.lpAllowance >= data.lpBalance ? "Authorized" : "Confirm in MetaMask"}</small></div><button className="outline-button" disabled={busy || smartAccount || data.lpAllowance >= data.lpBalance} onClick={withdraw}>{data.lpAllowance >= data.lpBalance ? "✓ Authorized" : "Authorize"}</button></div>
+            <div className={data.lpAllowance >= data.lpBalance ? "pool-step current" : "pool-step"}><span>2</span><div><strong>Remove all my liquidity</strong><small>Tokens return to this wallet</small></div><button className="primary-button" disabled={busy || smartAccount || data.lpAllowance < data.lpBalance} onClick={withdraw}>{busy && data.lpAllowance >= data.lpBalance ? "Waiting…" : "Remove liquidity"}</button></div>
+          </div>
+        </>}
+        {note("remove")}
+      </div>}
+      {activeAction === "reset" && <div className="pool-action-panel">
+        <h3>Reset to 10 uCURR = 1 test USDC</h3>
+        {resetPlan.stage === "transfer" && <p>Only locked minimum liquidity remains. A small transfer of exactly {formatUnits(resetPlan.donation, 18)} uCURR will set up the new ratio. It stays in the pool.</p>}
+        {resetPlan.stage === "sync" && <p>The uCURR transfer is confirmed. One more transaction will update the pool ratio.</p>}
+        {resetPlan.stage === "complete" && <p className="admin-ready">The current pool ratio is 10 uCURR per 1 test USDC. You can add liquidity in the Add tab.</p>}
+        {resetPlan.stage === "unavailable" && <p>{resetPlan.reason}</p>}
+        <div className="pool-step-list">
+          <div className={resetPlan.stage === "transfer" ? "pool-step current" : "pool-step"}><span>1</span><div><strong>Send small uCURR amount</strong><small>Confirm transfer in MetaMask</small></div><button className="outline-button" disabled={busy || loading || smartAccount || resetPlan.stage !== "transfer"} onClick={resetRatio}>{resetPlan.stage === "sync" || resetPlan.stage === "complete" ? "✓ Sent" : "Send uCURR"}</button></div>
+          <div className={resetPlan.stage === "sync" ? "pool-step current" : "pool-step"}><span>2</span><div><strong>Update pool price</strong><small>Confirm pool update in MetaMask</small></div><button className="primary-button" disabled={busy || loading || smartAccount || resetPlan.stage !== "sync"} onClick={resetRatio}>{resetPlan.stage === "complete" ? "✓ Updated" : "Update price"}</button></div>
+        </div>
+        {resetPending && <p className="transaction-note">The pool is public. Complete both steps promptly and recheck balances if interrupted.</p>}
+        {note("reset")}
+      </div>}
       <button className="text-button" disabled={busy || loading} onClick={refresh}>Refresh pool status</button>
     </>}
-    {message && <p className="pool-message" role="status">{message}</p>}
-    {txHash && <p className="setup-tx">Transaction: <a href={`https://sepolia.etherscan.io/tx/${txHash}`} target="_blank" rel="noopener noreferrer">View on Etherscan ↗</a></p>}
+    {note("status")}
   </section>;
 }

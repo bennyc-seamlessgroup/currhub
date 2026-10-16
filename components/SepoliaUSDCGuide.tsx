@@ -42,7 +42,7 @@ export default function SepoliaUSDCGuide({ provider, wallet }: Props) {
   }
 
   return <section className="setup-intro" aria-labelledby="sepolia-usdc-title">
-    <span className="setup-step">3</span><div>
+    <span className="setup-step">2</span><div>
       <h2 id="sepolia-usdc-title">Get test USDC</h2>
       <p>Open Circle&apos;s testnet faucet. Choose <strong>USDC</strong> and <strong>Ethereum Sepolia</strong>, paste your public MetaMask address, then send test USDC. Use the same wallet you connected above. No mainnet USDC is needed.</p>
       <a className="setup-link" href="https://faucet.circle.com/" target="_blank" rel="noopener noreferrer">Open Circle testnet faucet <span aria-hidden="true">↗</span></a>
